@@ -196,7 +196,9 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("message", (message) => {
         try {
+          console.log("[Twilio] Raw message received:", message.toString().substring(0, 200));
           const msg = JSON.parse(message);
+          console.log("[Twilio] Parsed event:", msg.event);
 
           switch (msg.event) {
             case "start":
@@ -205,7 +207,7 @@ fastify.register(async (fastifyInstance) => {
               customParameters = msg.start.customParameters;
               console.log(`[Twilio] Stream started: ${streamSid}`);
               console.log(`[Twilio] Call SID: ${callSid}`);
-              console.log(`[Twilio] Custom parameters:`, customParameters);
+              console.log(`[Twilio] Custom parameters:`, JSON.stringify(customParameters));
               setupElevenLabs();
               break;
 
