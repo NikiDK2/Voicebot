@@ -107,10 +107,7 @@ function buildPromptAndMessage(contact, customPrompt, customFirstMessage) {
       `Je belt met Dr. ${lastName}, een medisch professional. ` +
       `Wees beleefd, professioneel en respectvol van hun tijd.`;
 
-  let firstMessage =
-    customFirstMessage ||
-    `${greeting} Dr. ${lastName}, mijn naam is Sophie. ` +
-      `Spreek ik met Dr. ${firstName} ${lastName}?`;
+  let firstMessage = customFirstMessage || "";
 
   // Replace placeholders
   if (customFirstMessage) {
@@ -378,7 +375,7 @@ fastify.register(async (fastifyInstance) => {
                     prompt:
                       customParameters?.prompt || "You are a helpful assistant",
                   },
-                  first_message: customParameters?.first_message || "Hello!",
+                  first_message: customParameters?.first_message || "",
                 },
               },
             };
