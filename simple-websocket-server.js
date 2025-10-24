@@ -109,7 +109,7 @@ fastify.register(async (fastifyInstance) => {
                       customParameters?.prompt ||
                       "You are a helpful assistant speaking Dutch",
                   },
-                  first_message: customParameters?.first_message || "Hallo!",
+                  first_message: customParameters?.first_message || "",
                 },
               },
             };
