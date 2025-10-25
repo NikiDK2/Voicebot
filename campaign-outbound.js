@@ -391,7 +391,12 @@ fastify.register(async (fastifyInstance) => {
                 [campaignId]
               );
 
+              console.log(`[Database] Query executed, rows.length = ${rows.length}`);
+
               if (rows && rows.length > 0) {
+                console.log(`[Database] temp_prompt exists: ${!!rows[0].temp_prompt}`);
+                console.log(`[Database] temp_first_message exists: ${rows[0].temp_first_message !== null}`);
+                
                 if (rows[0].temp_prompt) {
                   prompt = rows[0].temp_prompt;
                   console.log(
@@ -404,9 +409,12 @@ fastify.register(async (fastifyInstance) => {
                     `[Database] Retrieved first message (${firstMessage.length} chars)`
                   );
                 }
+              } else {
+                console.log(`[Database] No rows found for campaign ${campaignId}`);
               }
             } catch (dbError) {
               console.error("[Database] Error fetching prompt:", dbError);
+              console.error("[Database] Error details:", dbError.message);
               console.log(
                 "[ElevenLabs] Using fallback prompt from customParameters"
               );
