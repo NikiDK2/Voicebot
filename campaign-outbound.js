@@ -376,21 +376,28 @@ fastify.register(async (fastifyInstance) => {
             return;
           }
 
-          // Fetch prompt from database if campaign_id is provided
-          let prompt =
-            customParameters?.prompt || "You are a helpful assistant";
+          // Get prompt - priority order: custom parameters > PHP proxy > database
+          let prompt = customParameters?.prompt || null;
           let firstMessage = customParameters?.first_message || "";
 
-          if (campaignId) {
+          console.log(
+            `[Database] Custom parameter prompt available: ${
+              !!prompt && prompt.length > 0 ? `${prompt.length} chars` : "NO"
+            }`
+          );
+
+          // Only try PHP proxy if no prompt was provided via custom parameters
+          if (!prompt && campaignId) {
             console.log(
-              `[Database] Fetching prompt for campaign ${campaignId} via PHP proxy`
+              `[Database] No prompt in custom parameters, trying PHP proxy for campaign ${campaignId}`
             );
             try {
               // Fetch via PHP proxy instead of direct MySQL (avoids whitelist issues)
               const phpProxyUrl =
-                "https://www.innovationstudio.be/get-campaign-prompt.php";
+                "https://www.innovationstudio.be/Scraper/get-campaign-prompt.php";
               const response = await fetch(
-                `${phpProxyUrl}?campaign_id=${campaignId}`
+                `${phpProxyUrl}?campaign_id=${campaignId}`,
+                { signal: AbortSignal.timeout(5000) } // 5 second timeout
               );
 
               if (!response.ok) {
@@ -418,12 +425,18 @@ fastify.register(async (fastifyInstance) => {
             } catch (fetchError) {
               console.error(
                 "[Database] Error fetching via PHP proxy:",
-                fetchError
+                fetchError.message
               );
               console.log(
-                "[ElevenLabs] Using fallback prompt from customParameters"
+                "[ElevenLabs] PHP proxy unavailable, will use fallback prompt"
               );
             }
+          }
+
+          // Final fallback if still no prompt
+          if (!prompt) {
+            prompt = "You are a helpful assistant";
+            console.log("[ElevenLabs] Using default fallback prompt");
           }
 
           console.log("[ElevenLabs] Getting signed URL...");
