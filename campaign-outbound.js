@@ -362,8 +362,11 @@ fastify.register(async (fastifyInstance) => {
 
       const setupElevenLabs = async () => {
         try {
+          console.log("[ElevenLabs] setupElevenLabs called");
           const agentId = customParameters?.agent_id;
           const campaignId = customParameters?.campaign_id;
+
+          console.log(`[ElevenLabs] Agent ID: ${agentId}, Campaign ID: ${campaignId}`);
 
           if (!agentId) {
             console.error("[ElevenLabs] No agent ID provided");
@@ -407,8 +410,11 @@ fastify.register(async (fastifyInstance) => {
             }
           }
 
+          console.log("[ElevenLabs] Getting signed URL...");
           const signedUrl = await getSignedUrl(agentId);
+          console.log("[ElevenLabs] Got signed URL, connecting...");
           elevenLabsWs = new WebSocket(signedUrl);
+          console.log("[ElevenLabs] WebSocket created");
 
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
@@ -537,6 +543,7 @@ fastify.register(async (fastifyInstance) => {
           });
         } catch (error) {
           console.error("[ElevenLabs] Setup error:", error);
+          console.error("[ElevenLabs] Error stack:", error.stack);
         }
       };
 
