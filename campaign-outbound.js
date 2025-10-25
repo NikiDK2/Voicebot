@@ -343,13 +343,15 @@ fastify.register(async (fastifyInstance) => {
   fastifyInstance.get(
     "/campaign-media-stream",
     { websocket: true },
-    (ws, req) => {
+    (connection, req) => {
       console.log("[Server] Twilio connected to campaign media stream");
       console.log(
         "[Server] Request headers:",
         JSON.stringify(req.headers, null, 2)
       );
       console.log("[Server] Request URL:", req.url);
+
+      const ws = connection.socket; // Fastify wraps the socket
 
       let streamSid = null;
       let callSid = null;
