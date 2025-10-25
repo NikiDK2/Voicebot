@@ -55,7 +55,6 @@ const dbPool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   connectTimeout: 10000, // 10 seconden timeout
-  timeout: 30000, // 30 seconden query timeout
 });
 
 // Root route
