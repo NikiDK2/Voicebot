@@ -54,6 +54,8 @@ const dbPool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  connectTimeout: 10000, // 10 seconden timeout
+  timeout: 30000, // 30 seconden query timeout
 });
 
 // Root route
@@ -366,7 +368,9 @@ fastify.register(async (fastifyInstance) => {
           const agentId = customParameters?.agent_id;
           const campaignId = customParameters?.campaign_id;
 
-          console.log(`[ElevenLabs] Agent ID: ${agentId}, Campaign ID: ${campaignId}`);
+          console.log(
+            `[ElevenLabs] Agent ID: ${agentId}, Campaign ID: ${campaignId}`
+          );
 
           if (!agentId) {
             console.error("[ElevenLabs] No agent ID provided");
