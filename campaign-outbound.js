@@ -383,48 +383,43 @@ fastify.register(async (fastifyInstance) => {
 
           if (campaignId) {
             console.log(
-              `[Database] Fetching prompt for campaign ${campaignId}`
+              `[Database] Fetching prompt for campaign ${campaignId} via PHP proxy`
             );
             try {
-              const [rows] = await dbPool.execute(
-                "SELECT temp_prompt, temp_first_message FROM ID313555_Xentrographics2.calling_campaigns WHERE id = ?",
-                [campaignId]
+              // Fetch via PHP proxy instead of direct MySQL (avoids whitelist issues)
+              const phpProxyUrl =
+                "https://www.innovationstudio.be/get-campaign-prompt.php";
+              const response = await fetch(
+                `${phpProxyUrl}?campaign_id=${campaignId}`
               );
 
+              if (!response.ok) {
+                throw new Error(`PHP proxy returned status ${response.status}`);
+              }
+
+              const data = await response.json();
               console.log(
-                `[Database] Query executed, rows.length = ${rows.length}`
+                `[Database] PHP proxy response:`,
+                JSON.stringify(data).substring(0, 200)
               );
 
-              if (rows && rows.length > 0) {
+              if (data.success && data.temp_prompt) {
+                prompt = data.temp_prompt;
                 console.log(
-                  `[Database] temp_prompt exists: ${!!rows[0].temp_prompt}`
-                );
-                console.log(
-                  `[Database] temp_first_message exists: ${
-                    rows[0].temp_first_message !== null
-                  }`
-                );
-
-                if (rows[0].temp_prompt) {
-                  prompt = rows[0].temp_prompt;
-                  console.log(
-                    `[Database] Retrieved prompt (${prompt.length} chars)`
-                  );
-                }
-                if (rows[0].temp_first_message !== null) {
-                  firstMessage = rows[0].temp_first_message;
-                  console.log(
-                    `[Database] Retrieved first message (${firstMessage.length} chars)`
-                  );
-                }
-              } else {
-                console.log(
-                  `[Database] No rows found for campaign ${campaignId}`
+                  `[Database] Retrieved prompt via PHP proxy (${prompt.length} chars)`
                 );
               }
-            } catch (dbError) {
-              console.error("[Database] Error fetching prompt:", dbError);
-              console.error("[Database] Error details:", dbError.message);
+              if (data.success && data.temp_first_message) {
+                firstMessage = data.temp_first_message;
+                console.log(
+                  `[Database] Retrieved first message via PHP proxy (${firstMessage.length} chars)`
+                );
+              }
+            } catch (fetchError) {
+              console.error(
+                "[Database] Error fetching via PHP proxy:",
+                fetchError
+              );
               console.log(
                 "[ElevenLabs] Using fallback prompt from customParameters"
               );
