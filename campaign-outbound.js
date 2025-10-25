@@ -54,7 +54,9 @@ const dbPool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  connectTimeout: 10000, // 10 seconden timeout
+  connectTimeout: 30000, // 30 seconden timeout
+  acquireTimeout: 30000,
+  timeout: 30000,
 });
 
 // Root route
@@ -387,16 +389,24 @@ fastify.register(async (fastifyInstance) => {
             );
             try {
               const [rows] = await dbPool.execute(
-                "SELECT temp_prompt, temp_first_message FROM calling_campaigns WHERE id = ?",
+                "SELECT temp_prompt, temp_first_message FROM ID313555_Xentrographics2.calling_campaigns WHERE id = ?",
                 [campaignId]
               );
 
-              console.log(`[Database] Query executed, rows.length = ${rows.length}`);
+              console.log(
+                `[Database] Query executed, rows.length = ${rows.length}`
+              );
 
               if (rows && rows.length > 0) {
-                console.log(`[Database] temp_prompt exists: ${!!rows[0].temp_prompt}`);
-                console.log(`[Database] temp_first_message exists: ${rows[0].temp_first_message !== null}`);
-                
+                console.log(
+                  `[Database] temp_prompt exists: ${!!rows[0].temp_prompt}`
+                );
+                console.log(
+                  `[Database] temp_first_message exists: ${
+                    rows[0].temp_first_message !== null
+                  }`
+                );
+
                 if (rows[0].temp_prompt) {
                   prompt = rows[0].temp_prompt;
                   console.log(
@@ -410,7 +420,9 @@ fastify.register(async (fastifyInstance) => {
                   );
                 }
               } else {
-                console.log(`[Database] No rows found for campaign ${campaignId}`);
+                console.log(
+                  `[Database] No rows found for campaign ${campaignId}`
+                );
               }
             } catch (dbError) {
               console.error("[Database] Error fetching prompt:", dbError);
