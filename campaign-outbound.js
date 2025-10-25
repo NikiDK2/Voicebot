@@ -467,6 +467,7 @@ fastify.register(async (fastifyInstance) => {
 
               switch (message.type) {
                 case "audio":
+                  // Audio streaming - no logging to reduce spam
                   if (streamSid) {
                     const audioData = {
                       event: "media",
@@ -565,13 +566,12 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("message", (message) => {
         try {
-          console.log(
-            "[Twilio] Raw message received:",
-            message.toString().substring(0, 200)
-          );
           const msg = JSON.parse(message);
 
-          console.log("[Twilio] Received message event:", msg.event);
+          // Only log non-media events to reduce log spam
+          if (msg.event !== "media") {
+            console.log("[Twilio] Received message event:", msg.event);
+          }
 
           switch (msg.event) {
             case "start":
@@ -587,6 +587,7 @@ fastify.register(async (fastifyInstance) => {
               break;
 
             case "media":
+              // Audio streaming - no logging to reduce spam
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
                 const audioMessage = {
                   user_audio_chunk: Buffer.from(
