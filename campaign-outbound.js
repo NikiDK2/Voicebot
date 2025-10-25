@@ -356,9 +356,48 @@ fastify.register(async (fastifyInstance) => {
       const setupElevenLabs = async () => {
         try {
           const agentId = customParameters?.agent_id;
+          const campaignId = customParameters?.campaign_id;
+
           if (!agentId) {
             console.error("[ElevenLabs] No agent ID provided");
             return;
+          }
+
+          // Fetch prompt from database if campaign_id is provided
+          let prompt =
+            customParameters?.prompt || "You are a helpful assistant";
+          let firstMessage = customParameters?.first_message || "";
+
+          if (campaignId) {
+            console.log(
+              `[Database] Fetching prompt for campaign ${campaignId}`
+            );
+            try {
+              const [rows] = await dbPool.execute(
+                "SELECT temp_prompt, temp_first_message FROM calling_campaigns WHERE id = ?",
+                [campaignId]
+              );
+
+              if (rows && rows.length > 0) {
+                if (rows[0].temp_prompt) {
+                  prompt = rows[0].temp_prompt;
+                  console.log(
+                    `[Database] Retrieved prompt (${prompt.length} chars)`
+                  );
+                }
+                if (rows[0].temp_first_message !== null) {
+                  firstMessage = rows[0].temp_first_message;
+                  console.log(
+                    `[Database] Retrieved first message (${firstMessage.length} chars)`
+                  );
+                }
+              }
+            } catch (dbError) {
+              console.error("[Database] Error fetching prompt:", dbError);
+              console.log(
+                "[ElevenLabs] Using fallback prompt from customParameters"
+              );
+            }
           }
 
           const signedUrl = await getSignedUrl(agentId);
@@ -367,19 +406,29 @@ fastify.register(async (fastifyInstance) => {
           elevenLabsWs.on("open", () => {
             console.log("[ElevenLabs] Connected to Conversational AI");
 
+            // Log the prompt we're sending
+            console.log(
+              "[ElevenLabs] Prompt being sent:",
+              prompt.substring(0, 100) + "..."
+            );
+            console.log(
+              "[ElevenLabs] First message being sent:",
+              firstMessage || "(empty)"
+            );
+
             const initialConfig = {
               type: "conversation_initiation_client_data",
               conversation_config_override: {
                 agent: {
                   prompt: {
-                    prompt:
-                      customParameters?.prompt || "You are a helpful assistant",
+                    prompt: prompt,
                   },
-                  first_message: customParameters?.first_message || "",
+                  first_message: firstMessage,
                 },
               },
             };
 
+            console.log("[ElevenLabs] Sending initial config to ElevenLabs");
             elevenLabsWs.send(JSON.stringify(initialConfig));
           });
 
@@ -494,6 +543,10 @@ fastify.register(async (fastifyInstance) => {
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
               console.log(`[Twilio] Stream started: ${streamSid}`);
+              console.log(
+                "[Twilio] Custom parameters received:",
+                JSON.stringify(customParameters, null, 2)
+              );
               setupElevenLabs();
               break;
 
