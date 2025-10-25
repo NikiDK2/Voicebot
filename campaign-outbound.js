@@ -345,6 +345,11 @@ fastify.register(async (fastifyInstance) => {
     { websocket: true },
     (ws, req) => {
       console.log("[Server] Twilio connected to campaign media stream");
+      console.log(
+        "[Server] Request headers:",
+        JSON.stringify(req.headers, null, 2)
+      );
+      console.log("[Server] Request URL:", req.url);
 
       let streamSid = null;
       let callSid = null;
@@ -535,9 +540,12 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("message", (message) => {
         try {
-          console.log("[Twilio] Raw message received:", message.toString().substring(0, 200));
+          console.log(
+            "[Twilio] Raw message received:",
+            message.toString().substring(0, 200)
+          );
           const msg = JSON.parse(message);
-          
+
           console.log("[Twilio] Received message event:", msg.event);
 
           switch (msg.event) {
