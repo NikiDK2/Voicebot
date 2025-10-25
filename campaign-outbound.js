@@ -535,7 +535,10 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("message", (message) => {
         try {
+          console.log("[Twilio] Raw message received:", message.toString().substring(0, 200));
           const msg = JSON.parse(message);
+          
+          console.log("[Twilio] Received message event:", msg.event);
 
           switch (msg.event) {
             case "start":
