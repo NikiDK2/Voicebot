@@ -50,6 +50,7 @@ fastify.register(async (fastifyInstance) => {
       let lastActivity = Date.now();
       let lastAudioTime = Date.now();
       let closingPhraseDetected = false;
+      let lastAgentResponse = ""; // Track laatste agent response om premature end_call te detecteren
 
       ws.on("error", console.error);
 
@@ -69,13 +70,28 @@ fastify.register(async (fastifyInstance) => {
       };
 
       // Function to check for closing phrases (met delay zodat bot kan afronden)
+      // BELANGRIJK: Alleen de ECHTE afsluitingszinnen triggeren een call end
+      // "Ik activeer uw account" is NIET een afsluiting!
       const checkForClosingPhrase = (text) => {
         const lowerText = text.toLowerCase();
         const closingPhrases = [
+          // Voorbeelden goede afsluiting - moet ALLEMAAL aanwezig zijn in de zin
+          "perfect, ik heb het genoteerd. dank u voor uw tijd, dokter. nog een fijne dag",
+          "dank u voor uw tijd, dokter. nog een fijne dag",
+          "uitstekend, bedankt en veel succes met uw accreditatie",
+          "bedankt en veel succes met uw accreditatie",
+          "dank u wel voor uw hulp. ik stuur het vandaag nog door. prettige dag",
+          "dank u wel voor uw hulp. prettige dag",
+          // Oude patterns (voor backwards compatibility)
           "bedankt voor uw tijd en succes met uw accreditatie",
           "bedankt voor uw tijd en nog een fijne dag",
           "bedankt voor de tijd en nog een fijne dag",
-          "bedankt en nog een fijne dag",
+          "dank voor uw tijd en nog een fijne dag",
+          // Extra patterns met "dokter" of voornaam
+          "dank u voor uw tijd, dokter",
+          "dank voor uw tijd",
+          "prettige dag",
+          "nog een fijne dag",
         ];
 
         for (const phrase of closingPhrases) {
@@ -178,6 +194,191 @@ fastify.register(async (fastifyInstance) => {
                 elevenLabsWs.on("message", (data) => {
                   try {
                     const message = JSON.parse(data);
+
+                    // Log alle message types voor debugging (behalve audio om spam te voorkomen)
+                    if (message.type !== "audio") {
+                      console.log(`[ElevenLabs] Message type: ${message.type}`);
+                      // Log ook of er tool_calls in zitten
+                      if (
+                        message.tool_calls ||
+                        message.transcript?.[0]?.tool_calls ||
+                        message.agent_response_event?.tool_calls
+                      ) {
+                        console.log(
+                          `[ElevenLabs] Message contains tool_calls - logging structure`
+                        );
+                        console.log(
+                          JSON.stringify(message, null, 2).substring(0, 500)
+                        );
+                      }
+                    }
+
+                    // ALLEERBELANGRIJKSTE: Check EERST voor end_call tool voordat we andere dingen doen
+                    // MAAR: Negeer end_call als de agent alleen "Ik activeer" zegt zonder afsluiting!
+                    let foundEndCall = false;
+
+                    // Check alle mogelijke locaties voor end_call tool
+                    const checkForEndCallTool = (obj) => {
+                      if (!obj) return false;
+
+                      // Direct in message root
+                      if (obj.tool_calls) {
+                        const toolCalls = Array.isArray(obj.tool_calls)
+                          ? obj.tool_calls
+                          : [obj.tool_calls];
+                        for (const tc of toolCalls) {
+                          if (tc.tool_name === "end_call") return true;
+                        }
+                      }
+
+                      // In transcript array
+                      if (obj.transcript && Array.isArray(obj.transcript)) {
+                        for (const turn of obj.transcript) {
+                          if (turn.tool_calls) {
+                            const toolCalls = Array.isArray(turn.tool_calls)
+                              ? turn.tool_calls
+                              : [turn.tool_calls];
+                            for (const tc of toolCalls) {
+                              if (tc.tool_name === "end_call") return true;
+                            }
+                          }
+                        }
+                      }
+
+                      // In agent_response_event
+                      if (obj.agent_response_event?.tool_calls) {
+                        const toolCalls = Array.isArray(
+                          obj.agent_response_event.tool_calls
+                        )
+                          ? obj.agent_response_event.tool_calls
+                          : [obj.agent_response_event.tool_calls];
+                        for (const tc of toolCalls) {
+                          if (tc.tool_name === "end_call") return true;
+                        }
+                      }
+
+                      return false;
+                    };
+
+                    // CRITICAL: Check if this is a premature end_call (only "Ik activeer" without closing phrase)
+                    const hasPrematureEndCall = () => {
+                      if (!checkForEndCallTool(message)) return false;
+
+                      const agentText = lastAgentResponse.toLowerCase();
+
+                      // Check if agent said "Ik activeer" or similar
+                      const hasAccountActivation =
+                        agentText.includes("activeer") ||
+                        agentText.includes("account activ") ||
+                        agentText.includes("ik activeer");
+
+                      if (!hasAccountActivation) return false;
+
+                      // Check if there's NO closing phrase in the agent text
+                      const closingPhrases = [
+                        "dank",
+                        "bedankt",
+                        "bedank",
+                        "prettige dag",
+                        "fijne dag",
+                        "succes met uw accreditatie",
+                        "dank u wel voor uw hulp",
+                      ];
+
+                      const hasClosingPhrase = closingPhrases.some((phrase) =>
+                        agentText.includes(phrase)
+                      );
+
+                      if (!hasClosingPhrase) {
+                        console.log(
+                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - agent only said 'Ik activeer' without closing phrase, IGNORING end_call tool!"
+                        );
+                        return true; // This IS a premature end_call
+                      }
+
+                      return false; // Has closing phrase, so it's OK
+                    };
+
+                    // Only process end_call if it's NOT premature
+                    if (
+                      checkForEndCallTool(message) &&
+                      !hasPrematureEndCall()
+                    ) {
+                      foundEndCall = true;
+                      console.log(
+                        "[ElevenLabs] ⚠️ end_call tool detected - will wait 15 seconds for bot to finish"
+                      );
+
+                      // Cancel any existing timers
+                      if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
+
+                      // Give bot 15 seconds to finish speaking
+                      closingPhraseTimer = setTimeout(() => {
+                        const timeSinceLastAudio = Date.now() - lastAudioTime;
+                        console.log(
+                          `[ElevenLabs] After 15s delay - time since last audio: ${timeSinceLastAudio}ms`
+                        );
+
+                        // Als bot nog spreekt (audio binnen laatste 5 sec), wacht nog langer
+                        if (timeSinceLastAudio < 5000) {
+                          console.log(
+                            "[ElevenLabs] Bot still speaking, waiting additional 8 seconds..."
+                          );
+                          setTimeout(() => {
+                            const finalCheck = Date.now() - lastAudioTime;
+                            console.log(
+                              `[ElevenLabs] Final check - time since last audio: ${finalCheck}ms`
+                            );
+
+                            // Alleen hangup als bot echt klaar is (minimaal 3 sec stilte)
+                            if (finalCheck >= 3000) {
+                              console.log(
+                                "[ElevenLabs] Hanging up after end_call (bot definitely finished)"
+                              );
+                              if (streamSid)
+                                ws.send(
+                                  JSON.stringify({ event: "stop", streamSid })
+                                );
+                              if (elevenLabsWs?.readyState === WebSocket.OPEN)
+                                elevenLabsWs.close();
+                              ws.close();
+                            } else {
+                              console.log(
+                                "[ElevenLabs] Bot still speaking, waiting another 5 seconds..."
+                              );
+                              setTimeout(() => {
+                                console.log(
+                                  "[ElevenLabs] Hanging up after extended wait"
+                                );
+                                if (streamSid)
+                                  ws.send(
+                                    JSON.stringify({ event: "stop", streamSid })
+                                  );
+                                if (elevenLabsWs?.readyState === WebSocket.OPEN)
+                                  elevenLabsWs.close();
+                                ws.close();
+                              }, 5000);
+                            }
+                          }, 8000);
+                        } else {
+                          console.log(
+                            "[ElevenLabs] Hanging up after end_call (bot stopped speaking)"
+                          );
+                          if (streamSid)
+                            ws.send(
+                              JSON.stringify({ event: "stop", streamSid })
+                            );
+                          if (elevenLabsWs?.readyState === WebSocket.OPEN)
+                            elevenLabsWs.close();
+                          ws.close();
+                        }
+                      }, 15000); // 15 seconden - zeer ruim!
+
+                      // Blijf audio doorsturen, maar start de closing timer
+                      // Return niet - laat audio processing gewoon doorgaan
+                    }
+
+                    // Handle audio - forward to Twilio
                     if (message.type === "audio" && streamSid) {
                       ws.send(
                         JSON.stringify({
@@ -194,14 +395,216 @@ fastify.register(async (fastifyInstance) => {
                       lastAudioTime = Date.now(); // Track wanneer laatste audio werd verstuurd
                       resetSilenceTimer();
                     }
+
+                    // Handle agent response text
                     if (message.type === "agent_response") {
                       const text =
                         message.agent_response_event?.agent_response || "";
                       console.log(`[Agent]: ${text}`);
-                      if (checkForClosingPhrase(text)) return;
+
+                      // Track last agent response to detect premature end_call
+                      lastAgentResponse = text;
+
+                      // Check ook voor tool_calls in agent_response (soms zit end_call hierin)
+                      if (message.agent_response_event?.tool_calls) {
+                        for (const toolCall of message.agent_response_event
+                          .tool_calls) {
+                          if (toolCall.tool_name === "end_call") {
+                            console.log(
+                              "[ElevenLabs] end_call tool in agent_response detected - waiting 12 seconds"
+                            );
+                            if (closingPhraseTimer)
+                              clearTimeout(closingPhraseTimer);
+                            closingPhraseTimer = setTimeout(() => {
+                              const timeSinceLastAudio =
+                                Date.now() - lastAudioTime;
+                              if (timeSinceLastAudio < 3000) {
+                                setTimeout(() => {
+                                  console.log(
+                                    "[ElevenLabs] Hanging up after end_call (agent_response, bot finished)"
+                                  );
+                                  if (streamSid)
+                                    ws.send(
+                                      JSON.stringify({
+                                        event: "stop",
+                                        streamSid,
+                                      })
+                                    );
+                                  if (
+                                    elevenLabsWs?.readyState === WebSocket.OPEN
+                                  )
+                                    elevenLabsWs.close();
+                                  ws.close();
+                                }, 5000);
+                              } else {
+                                console.log(
+                                  "[ElevenLabs] Hanging up after end_call (agent_response)"
+                                );
+                                if (streamSid)
+                                  ws.send(
+                                    JSON.stringify({ event: "stop", streamSid })
+                                  );
+                                if (elevenLabsWs?.readyState === WebSocket.OPEN)
+                                  elevenLabsWs.close();
+                                ws.close();
+                              }
+                            }, 12000); // 12 seconden - geef bot meer tijd om af te ronden
+                            return; // Stop processing this message
+                          }
+                        }
+                      }
+
+                      // Check voor closing phrases, maar BEINDIG NIET DIRECT
+                      // Laat de bot zijn zin afmaken door alleen een timer te starten
+                      checkForClosingPhrase(text);
+
                       lastActivity = Date.now();
                       resetSilenceTimer();
                     }
+
+                    // Handle tool calls (like end_call) - kan op verschillende plaatsen zitten
+                    let toolCallsArray = [];
+
+                    // Check verschillende locaties voor tool_calls
+                    if (message.tool_calls) {
+                      toolCallsArray = Array.isArray(message.tool_calls)
+                        ? message.tool_calls
+                        : [message.tool_calls];
+                    } else if (
+                      message.transcript &&
+                      Array.isArray(message.transcript)
+                    ) {
+                      // Soms zitten tool_calls in transcript array
+                      for (const turn of message.transcript) {
+                        if (turn.tool_calls) {
+                          toolCallsArray = toolCallsArray.concat(
+                            Array.isArray(turn.tool_calls)
+                              ? turn.tool_calls
+                              : [turn.tool_calls]
+                          );
+                        }
+                      }
+                    } else if (message.transcript?.[0]?.tool_calls) {
+                      toolCallsArray = Array.isArray(
+                        message.transcript[0].tool_calls
+                      )
+                        ? message.transcript[0].tool_calls
+                        : [message.transcript[0].tool_calls];
+                    }
+
+                    // Check alle gevonden tool_calls
+                    for (const toolCall of toolCallsArray) {
+                      if (toolCall && toolCall.tool_name === "end_call") {
+                        console.log(
+                          "[ElevenLabs] end_call tool detected - waiting 12 seconds before hanging up to let bot finish speaking"
+                        );
+
+                        // Cancel any existing closing timers
+                        if (closingPhraseTimer)
+                          clearTimeout(closingPhraseTimer);
+
+                        // Give bot 12 seconds to finish speaking after end_call tool
+                        closingPhraseTimer = setTimeout(() => {
+                          const timeSinceLastAudio = Date.now() - lastAudioTime;
+                          console.log(
+                            `[ElevenLabs] Time since last audio: ${timeSinceLastAudio}ms`
+                          );
+
+                          // Als bot nog spreekt (audio binnen laatste 5 sec), wacht langer
+                          if (timeSinceLastAudio < 5000) {
+                            console.log(
+                              "[ElevenLabs] Bot still speaking after end_call, waiting additional 5 seconds..."
+                            );
+                            setTimeout(() => {
+                              const finalTimeSinceAudio =
+                                Date.now() - lastAudioTime;
+                              console.log(
+                                `[ElevenLabs] Final check - time since last audio: ${finalTimeSinceAudio}ms`
+                              );
+                              console.log(
+                                "[ElevenLabs] Hanging up after end_call tool (bot finished)"
+                              );
+                              if (streamSid) {
+                                ws.send(
+                                  JSON.stringify({ event: "stop", streamSid })
+                                );
+                              }
+                              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                                elevenLabsWs.close();
+                              }
+                              ws.close();
+                            }, 5000);
+                          } else {
+                            console.log(
+                              "[ElevenLabs] Hanging up after end_call tool (bot stopped speaking)"
+                            );
+                            if (streamSid) {
+                              ws.send(
+                                JSON.stringify({ event: "stop", streamSid })
+                              );
+                            }
+                            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                              elevenLabsWs.close();
+                            }
+                            ws.close();
+                          }
+                        }, 12000); // 12 seconden delay na end_call tool - meer tijd!
+                        return; // Stop processing further message handlers
+                      }
+                    }
+
+                    // Handle conversation end event
+                    if (
+                      message.type === "conversation_end" ||
+                      message.termination_reason
+                    ) {
+                      const reason =
+                        message.termination_reason ||
+                        message.conversation_end_event?.reason ||
+                        "unknown";
+                      console.log(
+                        `[ElevenLabs] Conversation end detected: ${reason} - waiting 8 seconds before hanging up`
+                      );
+
+                      // Cancel any existing timers
+                      if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
+
+                      closingPhraseTimer = setTimeout(() => {
+                        const timeSinceLastAudio = Date.now() - lastAudioTime;
+                        if (timeSinceLastAudio < 3000) {
+                          setTimeout(() => {
+                            console.log(
+                              "[ElevenLabs] Hanging up after conversation_end (bot finished)"
+                            );
+                            if (streamSid) {
+                              ws.send(
+                                JSON.stringify({ event: "stop", streamSid })
+                              );
+                            }
+                            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                              elevenLabsWs.close();
+                            }
+                            ws.close();
+                          }, 5000);
+                        } else {
+                          console.log(
+                            "[ElevenLabs] Hanging up after conversation_end"
+                          );
+                          if (streamSid) {
+                            ws.send(
+                              JSON.stringify({ event: "stop", streamSid })
+                            );
+                          }
+                          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                            elevenLabsWs.close();
+                          }
+                          ws.close();
+                        }
+                      }, 8000);
+                      return;
+                    }
+
+                    // Handle user transcript
                     if (message.type === "user_transcript") {
                       console.log(
                         `[User]: ${message.user_transcription_event?.user_transcript}`
