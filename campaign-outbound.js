@@ -180,14 +180,14 @@ fastify.register(async (fastifyInstance) => {
                 console.log(
                   `[DEBUG] ✅ Closing phrase detected at END of text: "${phrase}"`,
                   "Setting closingPhraseDetected = true",
-                  "Will hang up in 15 seconds to let bot finish",
+                  "Will hang up in 25 seconds to let bot finish",
                   "Full text:", text.substring(0, 300)
                 );
 
               // Clear eventuele bestaande closing timer
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
 
-              // Wacht minimaal 15 seconden zodat de bot zijn zin kan afmaken
+              // Wacht minimaal 25 seconden zodat de bot zijn zin kan afmaken (15 + 10 extra)
               // KRITIEK: We moeten wachten tot de volledige closing phrase is uitgesproken
               closingPhraseTimer = setTimeout(() => {
                 // Check of er recent nog audio is geweest (bot spreekt nog)
@@ -234,13 +234,13 @@ fastify.register(async (fastifyInstance) => {
                   }, 8000);
                 } else {
                   // Bot is klaar met praten, sluit de call
-                  safeEndCall("Closing phrase timer - bot finished (15 seconds waited)", {
+                  safeEndCall("Closing phrase timer - bot finished (25 seconds waited)", {
                     closingPhraseDetected,
                     timeSinceLastAudio: Date.now() - lastAudioTime,
                     phrase: "closing phrase"
                   });
                 }
-              }, 15000); // Verhoogd naar 15 seconden om de bot meer tijd te geven
+              }, 25000); // Verhoogd naar 25 seconden (15 + 10 extra) om de bot meer tijd te geven
               }
               return true; // Closing phrase gevonden aan het einde, maar hang up gebeurt pas na delay
             } else {
