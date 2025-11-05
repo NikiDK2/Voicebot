@@ -256,7 +256,17 @@ fastify.register(async (fastifyInstance) => {
                     const hasPrematureEndCall = () => {
                       if (!checkForEndCallTool(message)) return false;
 
-                      const agentText = lastAgentResponse.toLowerCase();
+                      // Check BOTH the current message's agent response AND the last tracked response
+                      const currentAgentText = (
+                        message.agent_response_event?.agent_response || 
+                        message.transcript?.[0]?.agent_response || 
+                        ""
+                      ).toLowerCase();
+                      
+                      const lastAgentText = lastAgentResponse.toLowerCase();
+                      
+                      // Combine both to check - use whichever is more recent/non-empty
+                      const agentText = currentAgentText || lastAgentText;
 
                       // Check if agent said "Ik activeer" or similar
                       const hasAccountActivation =
@@ -283,7 +293,9 @@ fastify.register(async (fastifyInstance) => {
 
                       if (!hasClosingPhrase) {
                         console.log(
-                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - agent only said 'Ik activeer' without closing phrase, IGNORING end_call tool!"
+                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - agent only said 'Ik activeer' without closing phrase, IGNORING end_call tool!",
+                          "Current agent text:", currentAgentText.substring(0, 100),
+                          "Last agent text:", lastAgentText.substring(0, 100)
                         );
                         return true; // This IS a premature end_call
                       }
