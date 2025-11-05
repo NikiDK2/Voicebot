@@ -150,16 +150,39 @@ fastify.register(async (fastifyInstance) => {
         ];
 
         for (const phrase of closingPhrases) {
-          if (lowerText.includes(phrase)) {
-            // Als we nog geen closing phrase hebben gedetecteerd, start timer
-            if (!closingPhraseDetected) {
-              closingPhraseDetected = true;
-              console.log(
-                `[DEBUG] ✅ Closing phrase detected: "${phrase}"`,
-                "Setting closingPhraseDetected = true",
-                "Will hang up in 10 seconds to let bot finish",
-                "Full text:", text.substring(0, 200)
-              );
+          // KRITIEK: Check of de closing phrase aan het EINDE van de tekst staat
+          // Dit voorkomt false positives als de phrase ergens in het midden voorkomt
+          const phraseIndex = lowerText.indexOf(phrase);
+          
+          if (phraseIndex !== -1) {
+            // Check of de phrase aan het einde staat (laatste 100 karakters)
+            // Dit geeft wat ruimte voor eventuele leestekens na de closing phrase
+            const textEnd = lowerText.substring(Math.max(0, lowerText.length - 150));
+            const phraseAtEnd = textEnd.includes(phrase);
+            
+            console.log(
+              `[DEBUG] Closing phrase check: "${phrase}"`,
+              "Found at index:",
+              phraseIndex,
+              "Text length:",
+              lowerText.length,
+              "Phrase at end (last 150 chars):",
+              phraseAtEnd,
+              "Text end:",
+              textEnd.substring(Math.max(0, textEnd.length - 100))
+            );
+            
+            // Alleen detecteren als de phrase aan het einde van de tekst staat
+            if (phraseAtEnd) {
+              // Als we nog geen closing phrase hebben gedetecteerd, start timer
+              if (!closingPhraseDetected) {
+                closingPhraseDetected = true;
+                console.log(
+                  `[DEBUG] ✅ Closing phrase detected at END of text: "${phrase}"`,
+                  "Setting closingPhraseDetected = true",
+                  "Will hang up in 15 seconds to let bot finish",
+                  "Full text:", text.substring(0, 300)
+                );
 
               // Clear eventuele bestaande closing timer
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
@@ -218,8 +241,18 @@ fastify.register(async (fastifyInstance) => {
                   });
                 }
               }, 15000); // Verhoogd naar 15 seconden om de bot meer tijd te geven
+              }
+              return true; // Closing phrase gevonden aan het einde, maar hang up gebeurt pas na delay
+            } else {
+              console.log(
+                `[DEBUG] ⚠️ Closing phrase "${phrase}" found but NOT at end of text - IGNORING`,
+                "Phrase index:",
+                phraseIndex,
+                "Text length:",
+                lowerText.length,
+                "Text:", text.substring(0, 200)
+              );
             }
-            return true; // Closing phrase gevonden, maar hang up gebeurt pas na delay
           }
         }
         return false;
@@ -712,6 +745,17 @@ fastify.register(async (fastifyInstance) => {
                     if (message.type === "agent_response") {
                       const text =
                         message.agent_response_event?.agent_response || "";
+                      
+                      console.log(
+                        `[DEBUG] [Agent] 📝 FULL AGENT RESPONSE TEXT:`,
+                        "Length:",
+                        text.length,
+                        "Full text:",
+                        text,
+                        "Timestamp:",
+                        new Date().toISOString()
+                      );
+                      
                       console.log(`[Agent]: ${text}`);
 
                       // Track last agent response to detect premature end_call
@@ -802,19 +846,39 @@ fastify.register(async (fastifyInstance) => {
 
                       // Check voor closing phrases, maar BEINDIG NIET DIRECT
                       // Laat de bot zijn zin afmaken door alleen een timer te starten
+                      
+                      console.log(
+                        `[DEBUG] [Agent] 🔍 Checking for closing phrase in text:`,
+                        "Text length:",
+                        text.length,
+                        "Full text:",
+                        text,
+                        "Last 200 chars:",
+                        text.substring(Math.max(0, text.length - 200))
+                      );
+                      
                       const closingPhraseFound = checkForClosingPhrase(text);
                       
                       // DEBUG: Log of closing phrase werd gevonden
                       if (closingPhraseFound) {
                         console.log(
                           `[DEBUG] ✅ checkForClosingPhrase returned TRUE - closing phrase detected`,
-                          "ClosingPhraseDetected flag:", closingPhraseDetected
+                          "ClosingPhraseDetected flag:",
+                          closingPhraseDetected,
+                          "Full text:",
+                          text
                         );
                       } else {
                         console.log(
                           `[DEBUG] ⚠️ checkForClosingPhrase returned FALSE - no closing phrase found`,
-                          "ClosingPhraseDetected flag:", closingPhraseDetected,
-                          "Text length:", text.length
+                          "ClosingPhraseDetected flag:",
+                          closingPhraseDetected,
+                          "Text length:",
+                          text.length,
+                          "Full text:",
+                          text,
+                          "Last 200 chars:",
+                          text.substring(Math.max(0, text.length - 200))
                         );
                       }
 
