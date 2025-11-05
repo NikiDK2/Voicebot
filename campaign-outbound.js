@@ -38,7 +38,13 @@ fastify.register(async (fastifyInstance) => {
     "/campaign-media-stream",
     { websocket: true },
     (connection, req) => {
-      console.log("[Server] Twilio connected to campaign media stream");
+      console.log(
+        "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
+        "Timestamp:",
+        new Date().toISOString(),
+        "Request URL:",
+        req.url
+      );
       const ws = connection.socket;
 
       let streamSid = null;
@@ -221,9 +227,41 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("message", async (message) => {
         try {
+          // Log ALLE messages voor debugging (ook media)
+          const messageStr = message.toString();
+          console.log(
+            "[DEBUG] [Twilio] 📨 Raw message received:",
+            "Length:",
+            messageStr.length,
+            "First 200 chars:",
+            messageStr.substring(0, 200),
+            "Timestamp:",
+            new Date().toISOString()
+          );
+          
           const msg = JSON.parse(message);
+          
+          console.log(
+            "[DEBUG] [Twilio] ✅ Parsed message:",
+            "Event:",
+            msg.event,
+            "StreamSid:",
+            msg.start?.streamSid || msg.media?.streamSid || streamSid,
+            "CallSid:",
+            msg.start?.callSid || callSid,
+            "ClosingPhraseDetected:",
+            closingPhraseDetected,
+            "Timestamp:",
+            new Date().toISOString()
+          );
+          
           if (msg.event !== "media") {
-            console.log("[Twilio] Received message event:", msg.event);
+            console.log(
+              "[DEBUG] [Twilio] 📢 Non-media event received:",
+              msg.event,
+              "Full message:",
+              JSON.stringify(msg).substring(0, 300)
+            );
           }
 
           switch (msg.event) {
@@ -322,15 +360,33 @@ fastify.register(async (fastifyInstance) => {
 
                 elevenLabsWs.on("message", (data) => {
                   try {
+                    const dataStr = data.toString();
+                    console.log(
+                      "[DEBUG] [ElevenLabs] 📨 Raw message received:",
+                      "Length:",
+                      dataStr.length,
+                      "First 200 chars:",
+                      dataStr.substring(0, 200),
+                      "Timestamp:",
+                      new Date().toISOString()
+                    );
+                    
                     const message = JSON.parse(data);
 
                     // Log alle message types voor debugging (behalve audio om spam te voorkomen)
                     if (message.type !== "audio") {
                       console.log(
-                        `[DEBUG] [ElevenLabs] Message received:`,
-                        "Type:", message.type,
-                        "ClosingPhraseDetected:", closingPhraseDetected,
-                        "LastAgentResponse:", lastAgentResponse.substring(0, 50)
+                        `[DEBUG] [ElevenLabs] ✅ Message received:`,
+                        "Type:",
+                        message.type,
+                        "ClosingPhraseDetected:",
+                        closingPhraseDetected,
+                        "LastAgentResponse:",
+                        lastAgentResponse.substring(0, 100),
+                        "Timestamp:",
+                        new Date().toISOString(),
+                        "Full message (first 500 chars):",
+                        JSON.stringify(message).substring(0, 500)
                       );
                       
                       // Log ook of er tool_calls in zitten
@@ -931,7 +987,13 @@ fastify.register(async (fastifyInstance) => {
                       resetSilenceTimer();
                     }
                   } catch (error) {
-                    console.error("[ElevenLabs] Error:", error);
+                    console.error(
+                      "[DEBUG] [ElevenLabs] ❌ ERROR in message handler:",
+                      error.message || error,
+                      "Stack:",
+                      error.stack?.substring(0, 500)
+                    );
+                    console.error("[ElevenLabs] Error details:", error);
                   }
                 });
               } catch (error) {
@@ -994,7 +1056,31 @@ fastify.register(async (fastifyInstance) => {
               break;
 
             case "stop":
-              console.log(`[Twilio] Stream ${streamSid} ended`);
+              console.log(
+                "[DEBUG] [Twilio] 🚨 Stream stop event received",
+                "StreamSid:",
+                streamSid,
+                "CallSid:",
+                callSid,
+                "ClosingPhraseDetected:",
+                closingPhraseDetected,
+                "LastAgentResponse:",
+                lastAgentResponse.substring(0, 100)
+              );
+              
+              // KRITIEK: Check of dit een premature stop is
+              if (!closingPhraseDetected) {
+                console.log(
+                  "[DEBUG] 🚫 BLOCKED STOP EVENT - NO CLOSING PHRASE! 🚫",
+                  "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
+                  "ClosingPhraseDetected:",
+                  closingPhraseDetected
+                );
+                // Blokkeer de stop - probeer het gesprek te hervatten
+                // Dit is waarschijnlijk een premature stop van Twilio
+                return; // Stop processing maar sluit de websocket niet
+              }
+              
               if (silenceTimer) clearTimeout(silenceTimer);
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
@@ -1003,17 +1089,44 @@ fastify.register(async (fastifyInstance) => {
               break;
           }
         } catch (error) {
-          console.error("[Twilio] Error:", error);
+          console.error(
+            "[DEBUG] [Twilio] ❌ ERROR in message handler:",
+            error.message || error,
+            "Stack:",
+            error.stack?.substring(0, 500)
+          );
+          console.error("[Twilio] Error details:", error);
         }
       });
 
       ws.on("close", () => {
-        console.log("[Twilio] Client disconnected");
+        console.log(
+          "[DEBUG] [Twilio] 🚨 Client disconnected (close event)",
+          "ClosingPhraseDetected:",
+          closingPhraseDetected,
+          "StreamSid:",
+          streamSid,
+          "CallSid:",
+          callSid,
+          "LastAgentResponse:",
+          lastAgentResponse.substring(0, 100)
+        );
         if (silenceTimer) clearTimeout(silenceTimer);
         if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
+      });
+      
+      ws.on("error", (error) => {
+        console.error(
+          "[DEBUG] [Twilio] ❌ WebSocket error:",
+          error.message || error,
+          "ClosingPhraseDetected:",
+          closingPhraseDetected,
+          "StreamSid:",
+          streamSid
+        );
       });
     }
   );
