@@ -311,6 +311,7 @@ fastify.register(async (fastifyInstance) => {
                       );
                       
                       // KRITIEKE CHECK: Het gesprek mag ALLEEN eindigen als closingPhraseDetected = true
+                      // EN er moet een closing phrase in de huidige of laatste agent response zitten
                       // Dit betekent dat de bot EEN VAN DE 4 closing phrases heeft gezegd:
                       // - "Nog een fijne dag"
                       // - "Prettige dag"  
@@ -319,35 +320,68 @@ fastify.register(async (fastifyInstance) => {
                       // 
                       // NIETS ANDERS mag het gesprek beëindigen!
                       
-                      if (!closingPhraseDetected) {
+                      // DUBBELE CHECK: Zowel closingPhraseDetected flag ALS closing phrase in tekst
+                      // Als één van beide ontbreekt → BLOKKEER
+                      if (!closingPhraseDetected || !hasClosingPhraseInText) {
                         console.log(
                           "[ElevenLabs] ⚠️⚠️⚠️ PREMATURE end_call detected - BLOKKEER! ⚠️⚠️⚠️",
                           "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
                           "ClosingPhraseDetected:", closingPhraseDetected,
+                          "HasClosingPhraseInText:", hasClosingPhraseInText,
                           "Current agent text:", currentAgentText.substring(0, 200),
                           "Last agent text:", lastAgentText.substring(0, 200),
-                          "HasClosingPhraseInText:", hasClosingPhraseInText,
                           "IGNORING end_call tool - BLOKKEER ALLES!"
                         );
-                        return true; // This IS a premature end_call - ALTIJD BLOKKEEREN tenzij closingPhraseDetected = true
+                        return true; // This IS a premature end_call - ALTIJD BLOKKEEREN tenzij beide checks true zijn
                       }
 
-                      // Alleen als closingPhraseDetected = true (bot heeft één van de 4 closing phrases gezegd)
+                      // Alleen als closingPhraseDetected = true EN er zit een closing phrase in de tekst
                       console.log(
-                        "[ElevenLabs] ✅ end_call tool ACCEPTED - closing phrase was detected earlier",
-                        "ClosingPhraseDetected:", closingPhraseDetected
+                        "[ElevenLabs] ✅ end_call tool ACCEPTED - closing phrase was detected",
+                        "ClosingPhraseDetected:", closingPhraseDetected,
+                        "HasClosingPhraseInText:", hasClosingPhraseInText
                       );
                       return false;
                     };
 
                     // Only process end_call if it's NOT premature
+                    // EXTRA CHECK: Als er een closing phrase in de huidige message zit, zet closingPhraseDetected eerst op true
+                    if (checkForEndCallTool(message)) {
+                      // Check of er een closing phrase in de huidige message zit
+                      const currentAgentText = (
+                        message.agent_response_event?.agent_response || 
+                        message.transcript?.[0]?.agent_response || 
+                        ""
+                      ).toLowerCase();
+                      
+                      const allowedClosingPhrases = [
+                        "nog een fijne dag",
+                        "prettige dag",
+                        "fijne dag",
+                        "succes met uw accreditatie",
+                      ];
+                      
+                      const hasClosingPhraseInCurrentMessage = allowedClosingPhrases.some((phrase) =>
+                        currentAgentText.includes(phrase)
+                      );
+                      
+                      // Als er een closing phrase in de huidige message zit, zet closingPhraseDetected op true
+                      if (hasClosingPhraseInCurrentMessage && !closingPhraseDetected) {
+                        closingPhraseDetected = true;
+                        console.log(
+                          "[ElevenLabs] ✅ Closing phrase found in current message with end_call tool - setting closingPhraseDetected = true"
+                        );
+                      }
+                    }
+                    
                     if (
                       checkForEndCallTool(message) &&
                       !hasPrematureEndCall()
                     ) {
                       foundEndCall = true;
                       console.log(
-                        "[ElevenLabs] ⚠️ end_call tool detected - will wait 20 seconds for bot to finish"
+                        "[ElevenLabs] ⚠️ end_call tool detected - will wait 20 seconds for bot to finish",
+                        "ClosingPhraseDetected:", closingPhraseDetected
                       );
 
                       // Cancel any existing timers
@@ -452,12 +486,25 @@ fastify.register(async (fastifyInstance) => {
                         for (const toolCall of message.agent_response_event
                           .tool_calls) {
                           if (toolCall.tool_name === "end_call") {
-                            // KRITIEKE CHECK: Alleen accepteren als closingPhraseDetected = true
-                            if (!closingPhraseDetected) {
+                            // KRITIEKE CHECK: Alleen accepteren als closingPhraseDetected = true EN er zit een closing phrase in de tekst
+                            const allowedClosingPhrases = [
+                              "nog een fijne dag",
+                              "prettige dag",
+                              "fijne dag",
+                              "succes met uw accreditatie",
+                            ];
+                            
+                            const hasClosingPhraseInText = allowedClosingPhrases.some((phrase) =>
+                              text.toLowerCase().includes(phrase)
+                            );
+                            
+                            if (!closingPhraseDetected || !hasClosingPhraseInText) {
                               console.log(
                                 "[ElevenLabs] ⚠️⚠️⚠️ PREMATURE end_call in agent_response detected - BLOKKEER! ⚠️⚠️⚠️",
                                 "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
                                 "ClosingPhraseDetected:", closingPhraseDetected,
+                                "HasClosingPhraseInText:", hasClosingPhraseInText,
+                                "Agent text:", text.substring(0, 200),
                                 "IGNORING end_call tool - BLOKKEER ALLES!"
                               );
                               return; // Stop processing - BLOKKEER de end_call
@@ -549,12 +596,32 @@ fastify.register(async (fastifyInstance) => {
                     // KRITIEK: Ook hier moet de premature check worden toegepast!
                     for (const toolCall of toolCallsArray) {
                       if (toolCall && toolCall.tool_name === "end_call") {
-                        // KRITIEKE CHECK: Alleen accepteren als closingPhraseDetected = true
-                        if (!closingPhraseDetected) {
+                        // KRITIEKE CHECK: Alleen accepteren als closingPhraseDetected = true EN er zit een closing phrase in de tekst
+                        const currentAgentText = (
+                          message.agent_response_event?.agent_response || 
+                          message.transcript?.[0]?.agent_response || 
+                          lastAgentResponse || 
+                          ""
+                        ).toLowerCase();
+                        
+                        const allowedClosingPhrases = [
+                          "nog een fijne dag",
+                          "prettige dag",
+                          "fijne dag",
+                          "succes met uw accreditatie",
+                        ];
+                        
+                        const hasClosingPhraseInText = allowedClosingPhrases.some((phrase) =>
+                          currentAgentText.includes(phrase)
+                        );
+                        
+                        if (!closingPhraseDetected || !hasClosingPhraseInText) {
                           console.log(
                             "[ElevenLabs] ⚠️⚠️⚠️ PREMATURE end_call in tool_calls array detected - BLOKKEER! ⚠️⚠️⚠️",
                             "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
                             "ClosingPhraseDetected:", closingPhraseDetected,
+                            "HasClosingPhraseInText:", hasClosingPhraseInText,
+                            "Current agent text:", currentAgentText.substring(0, 200),
                             "IGNORING end_call tool - BLOKKEER ALLES!"
                           );
                           return; // Stop processing - BLOKKEER de end_call
