@@ -62,15 +62,21 @@ fastify.register(async (fastifyInstance) => {
           // Check of er een closing phrase is gedetecteerd - anders NIET eindigen
           if (!closingPhraseDetected) {
             console.log(
-              "[Twilio] No activity for 25 seconds but NO closing phrase detected - NOT hanging up!",
-              "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'"
+              "[DEBUG] [Twilio] Silence timer triggered but NO closing phrase detected - NOT hanging up!",
+              "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
+              "ClosingPhraseDetected:", closingPhraseDetected,
+              "LastActivity:", new Date(lastActivity).toISOString(),
+              "TimeSinceLastActivity:", Date.now() - lastActivity, "ms"
             );
             // Reset de timer opnieuw - geef meer tijd
             resetSilenceTimer();
             return;
           }
           
-          console.log("[Twilio] No activity for 25 seconds and closing phrase was detected, hanging up call");
+          console.log(
+            "[DEBUG] [Twilio] Silence timer triggered AND closing phrase was detected - hanging up call",
+            "ClosingPhraseDetected:", closingPhraseDetected
+          );
           if (streamSid) {
             ws.send(JSON.stringify({ event: "stop", streamSid }));
           }
@@ -79,6 +85,19 @@ fastify.register(async (fastifyInstance) => {
           }
           ws.close();
         }, 25000); // 25 seconden - geeft veel meer tijd voor vragen/luisteren
+      };
+      
+      // Helper function om te loggen wanneer het gesprek wordt beëindigd
+      const logCallEnd = (reason, details = {}) => {
+        console.log(
+          "[DEBUG] 🚨 CALL ENDING 🚨",
+          "Reason:", reason,
+          "ClosingPhraseDetected:", closingPhraseDetected,
+          "LastAgentResponse:", lastAgentResponse.substring(0, 100),
+          "StreamSid:", streamSid,
+          "CallSid:", callSid,
+          "Details:", JSON.stringify(details)
+        );
       };
 
       // Function to check for closing phrases (met delay zodat bot kan afronden)
@@ -100,7 +119,10 @@ fastify.register(async (fastifyInstance) => {
             if (!closingPhraseDetected) {
               closingPhraseDetected = true;
               console.log(
-                `[ElevenLabs] Closing phrase detected: "${phrase}", will hang up in 10 seconds to let bot finish`
+                `[DEBUG] ✅ Closing phrase detected: "${phrase}"`,
+                "Setting closingPhraseDetected = true",
+                "Will hang up in 10 seconds to let bot finish",
+                "Full text:", text.substring(0, 200)
               );
 
               // Clear eventuele bestaande closing timer
@@ -117,9 +139,11 @@ fastify.register(async (fastifyInstance) => {
                     "[ElevenLabs] Bot still speaking, waiting additional 5 seconds..."
                   );
                   setTimeout(() => {
-                    console.log(
-                      "[ElevenLabs] Closing call after bot finished speaking"
-                    );
+                    logCallEnd("Closing phrase timer - bot finished speaking", {
+                      closingPhraseDetected,
+                      timeSinceLastAudio: Date.now() - lastAudioTime,
+                      phrase: "closing phrase"
+                    });
                     if (streamSid) {
                       ws.send(JSON.stringify({ event: "stop", streamSid }));
                     }
@@ -130,9 +154,11 @@ fastify.register(async (fastifyInstance) => {
                   }, 5000);
                 } else {
                   // Bot is klaar met praten, sluit de call
-                  console.log(
-                    "[ElevenLabs] Closing call - bot finished speaking (minimaal 10 seconden gewacht)"
-                  );
+                  logCallEnd("Closing phrase timer - bot finished (10 seconds waited)", {
+                    closingPhraseDetected,
+                    timeSinceLastAudio: Date.now() - lastAudioTime,
+                    phrase: "closing phrase"
+                  });
                   if (streamSid) {
                     ws.send(JSON.stringify({ event: "stop", streamSid }));
                   }
@@ -197,7 +223,13 @@ fastify.register(async (fastifyInstance) => {
 
                     // Log alle message types voor debugging (behalve audio om spam te voorkomen)
                     if (message.type !== "audio") {
-                      console.log(`[ElevenLabs] Message type: ${message.type}`);
+                      console.log(
+                        `[DEBUG] [ElevenLabs] Message received:`,
+                        "Type:", message.type,
+                        "ClosingPhraseDetected:", closingPhraseDetected,
+                        "LastAgentResponse:", lastAgentResponse.substring(0, 50)
+                      );
+                      
                       // Log ook of er tool_calls in zitten
                       if (
                         message.tool_calls ||
@@ -205,10 +237,18 @@ fastify.register(async (fastifyInstance) => {
                         message.agent_response_event?.tool_calls
                       ) {
                         console.log(
-                          `[ElevenLabs] Message contains tool_calls - logging structure`
+                          `[DEBUG] [ElevenLabs] Message contains tool_calls - logging structure`
                         );
                         console.log(
                           JSON.stringify(message, null, 2).substring(0, 500)
+                        );
+                      }
+                      
+                      // Log agent response als die er is
+                      if (message.agent_response_event?.agent_response) {
+                        console.log(
+                          `[DEBUG] [ElevenLabs] Agent response in message:`,
+                          message.agent_response_event.agent_response.substring(0, 150)
                         );
                       }
                     }
@@ -407,9 +447,10 @@ fastify.register(async (fastifyInstance) => {
 
                             // Alleen hangup als bot echt klaar is (minimaal 3 sec stilte)
                             if (finalCheck >= 3000) {
-                              console.log(
-                                "[ElevenLabs] Hanging up after end_call (bot definitely finished)"
-                              );
+                              logCallEnd("end_call tool (main check) - bot definitely finished", {
+                                closingPhraseDetected,
+                                timeSinceLastAudio: Date.now() - lastAudioTime
+                              });
                               if (streamSid)
                                 ws.send(
                                   JSON.stringify({ event: "stop", streamSid })
@@ -422,9 +463,10 @@ fastify.register(async (fastifyInstance) => {
                                 "[ElevenLabs] Bot still speaking, waiting another 5 seconds..."
                               );
                               setTimeout(() => {
-                                console.log(
-                                  "[ElevenLabs] Hanging up after extended wait"
-                                );
+                                logCallEnd("end_call tool (main check) - extended wait", {
+                                  closingPhraseDetected,
+                                  timeSinceLastAudio: Date.now() - lastAudioTime
+                                });
                                 if (streamSid)
                                   ws.send(
                                     JSON.stringify({ event: "stop", streamSid })
@@ -436,9 +478,10 @@ fastify.register(async (fastifyInstance) => {
                             }
                           }, 8000);
                         } else {
-                          console.log(
-                            "[ElevenLabs] Hanging up after end_call (bot stopped speaking)"
-                          );
+                          logCallEnd("end_call tool (main check) - bot stopped speaking", {
+                            closingPhraseDetected,
+                            timeSinceLastAudio: Date.now() - lastAudioTime
+                          });
                           if (streamSid)
                             ws.send(
                               JSON.stringify({ event: "stop", streamSid })
@@ -520,26 +563,28 @@ fastify.register(async (fastifyInstance) => {
                                 Date.now() - lastAudioTime;
                               if (timeSinceLastAudio < 3000) {
                                 setTimeout(() => {
-                                  console.log(
-                                    "[ElevenLabs] Hanging up after end_call (agent_response, bot finished)"
-                                  );
-                                  if (streamSid)
-                                    ws.send(
-                                      JSON.stringify({
-                                        event: "stop",
-                                        streamSid,
-                                      })
-                                    );
-                                  if (
-                                    elevenLabsWs?.readyState === WebSocket.OPEN
-                                  )
-                                    elevenLabsWs.close();
-                                  ws.close();
+                              logCallEnd("end_call tool in agent_response - bot finished", {
+                                closingPhraseDetected,
+                                timeSinceLastAudio: Date.now() - lastAudioTime
+                              });
+                              if (streamSid)
+                                ws.send(
+                                  JSON.stringify({
+                                    event: "stop",
+                                    streamSid,
+                                  })
+                                );
+                              if (
+                                elevenLabsWs?.readyState === WebSocket.OPEN
+                              )
+                                elevenLabsWs.close();
+                              ws.close();
                                 }, 5000);
                               } else {
-                                console.log(
-                                  "[ElevenLabs] Hanging up after end_call (agent_response)"
-                                );
+                                logCallEnd("end_call tool in agent_response - bot stopped", {
+                                  closingPhraseDetected,
+                                  timeSinceLastAudio: Date.now() - lastAudioTime
+                                });
                                 if (streamSid)
                                   ws.send(
                                     JSON.stringify({ event: "stop", streamSid })
@@ -654,23 +699,25 @@ fastify.register(async (fastifyInstance) => {
                               console.log(
                                 `[ElevenLabs] Final check - time since last audio: ${finalTimeSinceAudio}ms`
                               );
-                              console.log(
-                                "[ElevenLabs] Hanging up after end_call tool (bot finished)"
+                            logCallEnd("end_call tool in tool_calls array - bot finished", {
+                              closingPhraseDetected,
+                              timeSinceLastAudio: Date.now() - lastAudioTime
+                            });
+                            if (streamSid) {
+                              ws.send(
+                                JSON.stringify({ event: "stop", streamSid })
                               );
-                              if (streamSid) {
-                                ws.send(
-                                  JSON.stringify({ event: "stop", streamSid })
-                                );
-                              }
-                              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-                                elevenLabsWs.close();
-                              }
-                              ws.close();
+                            }
+                            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                              elevenLabsWs.close();
+                            }
+                            ws.close();
                             }, 5000);
                           } else {
-                            console.log(
-                              "[ElevenLabs] Hanging up after end_call tool (bot stopped speaking)"
-                            );
+                            logCallEnd("end_call tool in tool_calls array - bot stopped", {
+                              closingPhraseDetected,
+                              timeSinceLastAudio: Date.now() - lastAudioTime
+                            });
                             if (streamSid) {
                               ws.send(
                                 JSON.stringify({ event: "stop", streamSid })
@@ -717,9 +764,11 @@ fastify.register(async (fastifyInstance) => {
                         const timeSinceLastAudio = Date.now() - lastAudioTime;
                         if (timeSinceLastAudio < 3000) {
                           setTimeout(() => {
-                            console.log(
-                              "[ElevenLabs] Hanging up after conversation_end (bot finished)"
-                            );
+                            logCallEnd("conversation_end event - bot finished", {
+                              closingPhraseDetected,
+                              timeSinceLastAudio: Date.now() - lastAudioTime,
+                              reason: message.termination_reason || message.conversation_end_event?.reason || "unknown"
+                            });
                             if (streamSid) {
                               ws.send(
                                 JSON.stringify({ event: "stop", streamSid })
@@ -731,9 +780,11 @@ fastify.register(async (fastifyInstance) => {
                             ws.close();
                           }, 5000);
                         } else {
-                          console.log(
-                            "[ElevenLabs] Hanging up after conversation_end"
-                          );
+                          logCallEnd("conversation_end event - bot stopped", {
+                            closingPhraseDetected,
+                            timeSinceLastAudio: Date.now() - lastAudioTime,
+                            reason: message.termination_reason || message.conversation_end_event?.reason || "unknown"
+                          });
                           if (streamSid) {
                             ws.send(
                               JSON.stringify({ event: "stop", streamSid })
