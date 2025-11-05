@@ -92,21 +92,21 @@ fastify.register(async (fastifyInstance) => {
             if (!closingPhraseDetected) {
               closingPhraseDetected = true;
               console.log(
-                `[ElevenLabs] Closing phrase detected: "${phrase}", will hang up in 8 seconds to let bot finish`
+                `[ElevenLabs] Closing phrase detected: "${phrase}", will hang up in 10 seconds to let bot finish`
               );
 
               // Clear eventuele bestaande closing timer
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
 
-              // Wacht 12 seconden zodat de bot zijn zin kan afmaken
+              // Wacht minimaal 10 seconden zodat de bot zijn zin kan afmaken
               closingPhraseTimer = setTimeout(() => {
                 // Check of er recent nog audio is geweest (bot spreekt nog)
                 const timeSinceLastAudio = Date.now() - lastAudioTime;
 
-                // Als er in de laatste 3 seconden nog audio was, wacht iets langer
+                // Als er in de laatste 3 seconden nog audio was, wacht nog langer
                 if (timeSinceLastAudio < 3000) {
                   console.log(
-                    "[ElevenLabs] Bot still speaking, waiting additional 3 seconds..."
+                    "[ElevenLabs] Bot still speaking, waiting additional 5 seconds..."
                   );
                   setTimeout(() => {
                     console.log(
@@ -119,11 +119,11 @@ fastify.register(async (fastifyInstance) => {
                       elevenLabsWs.close();
                     }
                     ws.close();
-                  }, 3000);
+                  }, 5000);
                 } else {
                   // Bot is klaar met praten, sluit de call
                   console.log(
-                    "[ElevenLabs] Closing call - bot finished speaking"
+                    "[ElevenLabs] Closing call - bot finished speaking (minimaal 10 seconden gewacht)"
                   );
                   if (streamSid) {
                     ws.send(JSON.stringify({ event: "stop", streamSid }));
@@ -133,7 +133,7 @@ fastify.register(async (fastifyInstance) => {
                   }
                   ws.close();
                 }
-              }, 12000); // 12 seconden delay om bot zijn zin te laten afmaken
+              }, 10000); // Minimaal 10 seconden delay om bot zijn zin te laten afmaken
             }
             return true; // Closing phrase gevonden, maar hang up gebeurt pas na delay
           }
