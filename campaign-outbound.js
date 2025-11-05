@@ -54,11 +54,11 @@ fastify.register(async (fastifyInstance) => {
 
       ws.on("error", console.error);
 
-      // Function to reset silence timer (verhoogd naar 15 seconden voor meer geduld)
+      // Function to reset silence timer (verhoogd naar 25 seconden voor meer geduld)
       const resetSilenceTimer = () => {
         if (silenceTimer) clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
-          console.log("[Twilio] No activity for 15 seconds, hanging up call");
+          console.log("[Twilio] No activity for 25 seconds, hanging up call");
           if (streamSid) {
             ws.send(JSON.stringify({ event: "stop", streamSid }));
           }
@@ -66,7 +66,7 @@ fastify.register(async (fastifyInstance) => {
             elevenLabsWs.close();
           }
           ws.close();
-        }, 15000); // 15 seconds (was 5) - geeft meer tijd voor vragen/luisteren
+        }, 25000); // 25 seconden - geeft veel meer tijd voor vragen/luisteren
       };
 
       // Function to check for closing phrases (met delay zodat bot kan afronden)
@@ -75,23 +75,15 @@ fastify.register(async (fastifyInstance) => {
       const checkForClosingPhrase = (text) => {
         const lowerText = text.toLowerCase();
         const closingPhrases = [
-          // Voorbeelden goede afsluiting - moet ALLEMAAL aanwezig zijn in de zin
-          "perfect, ik heb het genoteerd. dank u voor uw tijd, dokter. nog een fijne dag",
+          "bedankt voor uw hulp. nog een fijne dag",
+          "bedankt, dokter, en nog een fijne dag",
+          "dank u voor uw tijd, dokter. fijne dag",
+          "dank u voor uw tijd, dokter. prettige dag",
           "dank u voor uw tijd, dokter. nog een fijne dag",
-          "uitstekend, bedankt en veel succes met uw accreditatie",
-          "bedankt en veel succes met uw accreditatie",
-          "dank u wel voor uw hulp. ik stuur het vandaag nog door. prettige dag",
-          "dank u wel voor uw hulp. prettige dag",
-          // Oude patterns (voor backwards compatibility)
           "bedankt voor uw tijd en succes met uw accreditatie",
+          "prettige dag nog",
+          "heel erg bedankt voor uw hulp",
           "bedankt voor uw tijd en nog een fijne dag",
-          "bedankt voor de tijd en nog een fijne dag",
-          "dank voor uw tijd en nog een fijne dag",
-          // Extra patterns met "dokter" of voornaam
-          "dank u voor uw tijd, dokter",
-          "dank voor uw tijd",
-          "prettige dag",
-          "nog een fijne dag",
         ];
 
         for (const phrase of closingPhrases) {
@@ -106,7 +98,7 @@ fastify.register(async (fastifyInstance) => {
               // Clear eventuele bestaande closing timer
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
 
-              // Wacht 8 seconden zodat de bot zijn zin kan afmaken
+              // Wacht 12 seconden zodat de bot zijn zin kan afmaken
               closingPhraseTimer = setTimeout(() => {
                 // Check of er recent nog audio is geweest (bot spreekt nog)
                 const timeSinceLastAudio = Date.now() - lastAudioTime;
@@ -141,7 +133,7 @@ fastify.register(async (fastifyInstance) => {
                   }
                   ws.close();
                 }
-              }, 8000); // 8 seconden delay om bot zijn zin te laten afmaken
+              }, 12000); // 12 seconden delay om bot zijn zin te laten afmaken
             }
             return true; // Closing phrase gevonden, maar hang up gebeurt pas na delay
           }
@@ -306,17 +298,17 @@ fastify.register(async (fastifyInstance) => {
                     ) {
                       foundEndCall = true;
                       console.log(
-                        "[ElevenLabs] ⚠️ end_call tool detected - will wait 15 seconds for bot to finish"
+                        "[ElevenLabs] ⚠️ end_call tool detected - will wait 20 seconds for bot to finish"
                       );
 
                       // Cancel any existing timers
                       if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
 
-                      // Give bot 15 seconds to finish speaking
+                      // Give bot 20 seconds to finish speaking
                       closingPhraseTimer = setTimeout(() => {
                         const timeSinceLastAudio = Date.now() - lastAudioTime;
                         console.log(
-                          `[ElevenLabs] After 15s delay - time since last audio: ${timeSinceLastAudio}ms`
+                          `[ElevenLabs] After 20s delay - time since last audio: ${timeSinceLastAudio}ms`
                         );
 
                         // Als bot nog spreekt (audio binnen laatste 5 sec), wacht nog langer
@@ -372,7 +364,7 @@ fastify.register(async (fastifyInstance) => {
                             elevenLabsWs.close();
                           ws.close();
                         }
-                      }, 15000); // 15 seconden - zeer ruim!
+                      }, 20000); // 20 seconden - zeer ruim!
 
                       // Blijf audio doorsturen, maar start de closing timer
                       // Return niet - laat audio processing gewoon doorgaan
@@ -448,7 +440,7 @@ fastify.register(async (fastifyInstance) => {
                                   elevenLabsWs.close();
                                 ws.close();
                               }
-                            }, 12000); // 12 seconden - geef bot meer tijd om af te ronden
+                            }, 15000); // 15 seconden - geef bot meer tijd om af te ronden
                             return; // Stop processing this message
                           }
                         }
@@ -548,7 +540,7 @@ fastify.register(async (fastifyInstance) => {
                             }
                             ws.close();
                           }
-                        }, 12000); // 12 seconden delay na end_call tool - meer tijd!
+                        }, 15000); // 15 seconden delay na end_call tool - meer tijd!
                         return; // Stop processing further message handlers
                       }
                     }
