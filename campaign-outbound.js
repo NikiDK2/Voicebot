@@ -447,12 +447,24 @@ fastify.register(async (fastifyInstance) => {
                       lastAgentResponse = text;
 
                       // Check ook voor tool_calls in agent_response (soms zit end_call hierin)
+                      // KRITIEK: Ook hier moet de premature check worden toegepast!
                       if (message.agent_response_event?.tool_calls) {
                         for (const toolCall of message.agent_response_event
                           .tool_calls) {
                           if (toolCall.tool_name === "end_call") {
+                            // KRITIEKE CHECK: Alleen accepteren als closingPhraseDetected = true
+                            if (!closingPhraseDetected) {
+                              console.log(
+                                "[ElevenLabs] ⚠️⚠️⚠️ PREMATURE end_call in agent_response detected - BLOKKEER! ⚠️⚠️⚠️",
+                                "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
+                                "ClosingPhraseDetected:", closingPhraseDetected,
+                                "IGNORING end_call tool - BLOKKEER ALLES!"
+                              );
+                              return; // Stop processing - BLOKKEER de end_call
+                            }
+                            
                             console.log(
-                              "[ElevenLabs] end_call tool in agent_response detected - waiting 12 seconds"
+                              "[ElevenLabs] ✅ end_call tool in agent_response ACCEPTED - closing phrase was detected earlier"
                             );
                             if (closingPhraseTimer)
                               clearTimeout(closingPhraseTimer);
@@ -534,17 +546,30 @@ fastify.register(async (fastifyInstance) => {
                     }
 
                     // Check alle gevonden tool_calls
+                    // KRITIEK: Ook hier moet de premature check worden toegepast!
                     for (const toolCall of toolCallsArray) {
                       if (toolCall && toolCall.tool_name === "end_call") {
+                        // KRITIEKE CHECK: Alleen accepteren als closingPhraseDetected = true
+                        if (!closingPhraseDetected) {
+                          console.log(
+                            "[ElevenLabs] ⚠️⚠️⚠️ PREMATURE end_call in tool_calls array detected - BLOKKEER! ⚠️⚠️⚠️",
+                            "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
+                            "ClosingPhraseDetected:", closingPhraseDetected,
+                            "IGNORING end_call tool - BLOKKEER ALLES!"
+                          );
+                          return; // Stop processing - BLOKKEER de end_call
+                        }
+                        
                         console.log(
-                          "[ElevenLabs] end_call tool detected - waiting 12 seconds before hanging up to let bot finish speaking"
+                          "[ElevenLabs] ✅ end_call tool in tool_calls array ACCEPTED - closing phrase was detected earlier",
+                          "waiting 15 seconds before hanging up to let bot finish speaking"
                         );
 
                         // Cancel any existing closing timers
                         if (closingPhraseTimer)
                           clearTimeout(closingPhraseTimer);
 
-                        // Give bot 12 seconds to finish speaking after end_call tool
+                        // Give bot 15 seconds to finish speaking after end_call tool
                         closingPhraseTimer = setTimeout(() => {
                           const timeSinceLastAudio = Date.now() - lastAudioTime;
                           console.log(
