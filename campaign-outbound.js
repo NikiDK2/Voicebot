@@ -74,16 +74,12 @@ fastify.register(async (fastifyInstance) => {
       // "Ik activeer uw account" is NIET een afsluiting!
       const checkForClosingPhrase = (text) => {
         const lowerText = text.toLowerCase();
+        // ALLEEN deze 4 zinnen mogen het gesprek beëindigen - NIETS anders!
         const closingPhrases = [
-          "bedankt voor uw hulp. nog een fijne dag",
-          "bedankt, dokter, en nog een fijne dag",
-          "dank u voor uw tijd, dokter. fijne dag",
-          "dank u voor uw tijd, dokter. prettige dag",
-          "dank u voor uw tijd, dokter. nog een fijne dag",
-          "bedankt voor uw tijd en succes met uw accreditatie",
-          "prettige dag nog",
-          "heel erg bedankt voor uw hulp",
-          "bedankt voor uw tijd en nog een fijne dag",
+          "nog een fijne dag",
+          "prettige dag",
+          "fijne dag",
+          "succes met uw accreditatie",
         ];
 
         for (const phrase of closingPhrases) {
@@ -275,46 +271,36 @@ fastify.register(async (fastifyInstance) => {
                         agentText.includes("account activ") ||
                         agentText.includes("ik activeer");
 
-                      // Check if there's a closing phrase in the agent text
+                      // Check if there's een van de 4 toegestane closing phrases in the agent text
                       const closingPhrases = [
-                        "dank",
-                        "bedankt",
-                        "bedank",
+                        "nog een fijne dag",
                         "prettige dag",
                         "fijne dag",
                         "succes met uw accreditatie",
-                        "dank u wel voor uw hulp",
-                        // Check ook voor de specifieke closing phrases
-                        "bedankt voor uw hulp. nog een fijne dag",
-                        "bedankt, dokter, en nog een fijne dag",
-                        "dank u voor uw tijd, dokter. fijne dag",
-                        "dank u voor uw tijd, dokter. prettige dag",
-                        "dank u voor uw tijd, dokter. nog een fijne dag",
-                        "bedankt voor uw tijd en succes met uw accreditatie",
-                        "prettige dag nog",
-                        "heel erg bedankt voor uw hulp",
-                        "bedankt voor uw tijd en nog een fijne dag",
                       ];
 
                       const hasClosingPhrase = closingPhrases.some((phrase) =>
                         agentText.includes(phrase)
                       );
 
-                      // BELANGRIJK: "Ik activeer" is GEEN trigger om het gesprek te beëindigen!
-                      // Als er "Ik activeer" in zit → ALTIJD blokkeren (tenzij closingPhraseDetected al true is)
-                      // Dit voorkomt dat het gesprek eindigt na "Ik activeer uw account nu meteen"
-                      if (hasAccountActivation && !closingPhraseDetected) {
+                      // KRITIEK: Het gesprek mag ALLEEN eindigen als één van de 4 toegestane closing phrases is gezegd
+                      // ALLES anders wordt geblokkeerd, inclusief "Ik activeer" en andere end_call triggers
+                      
+                      // Als er GEEN closing phrase is gedetecteerd → ALTIJD blokkeren
+                      if (!closingPhraseDetected) {
                         console.log(
-                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - agent said 'Ik activeer' - IGNORING end_call tool!",
-                          "'Ik activeer' is GEEN trigger om het gesprek te beëindigen. Wachten op closing phrase.",
+                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - NO closing phrase found yet!",
+                          "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
+                          "IGNORING end_call tool!",
                           "Current agent text:", currentAgentText.substring(0, 150),
                           "Last agent text:", lastAgentText.substring(0, 150),
                           "ClosingPhraseDetected:", closingPhraseDetected
                         );
-                        return true; // This IS a premature end_call - ALTIJD blokkeren als "Ik activeer" wordt gezegd
+                        return true; // This IS a premature end_call - BLOKKEER alles behalve de 4 toegestane closing phrases
                       }
 
-                      return false; // Has closing phrase OR closingPhraseDetected is already true, so it's OK
+                      // Als closingPhraseDetected al true is, dan is het OK om te eindigen
+                      return false;
                     };
 
                     // Only process end_call if it's NOT premature
@@ -572,16 +558,27 @@ fastify.register(async (fastifyInstance) => {
                     }
 
                     // Handle conversation end event
+                    // KRITIEK: conversation_end mag ALLEEN het gesprek beëindigen als één van de 4 closing phrases is gezegd
                     if (
                       message.type === "conversation_end" ||
                       message.termination_reason
                     ) {
+                      if (!closingPhraseDetected) {
+                        console.log(
+                          `[ElevenLabs] ⚠️ Conversation end detected but NO closing phrase found - IGNORING!`,
+                          "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
+                          "Reason:", message.termination_reason || message.conversation_end_event?.reason || "unknown"
+                        );
+                        // Niet beëindigen - wachten op closing phrase
+                        return;
+                      }
+
                       const reason =
                         message.termination_reason ||
                         message.conversation_end_event?.reason ||
                         "unknown";
                       console.log(
-                        `[ElevenLabs] Conversation end detected: ${reason} - waiting 8 seconds before hanging up`
+                        `[ElevenLabs] Conversation end detected: ${reason} - closing phrase was detected, waiting 10 seconds before hanging up`
                       );
 
                       // Cancel any existing timers
@@ -618,7 +615,7 @@ fastify.register(async (fastifyInstance) => {
                           }
                           ws.close();
                         }
-                      }, 8000);
+                      }, 10000); // 10 seconden delay
                       return;
                     }
 
