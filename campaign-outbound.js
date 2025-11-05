@@ -158,32 +158,60 @@ fastify.register(async (fastifyInstance) => {
               // Clear eventuele bestaande closing timer
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
 
-              // Wacht minimaal 10 seconden zodat de bot zijn zin kan afmaken
+              // Wacht minimaal 15 seconden zodat de bot zijn zin kan afmaken
+              // KRITIEK: We moeten wachten tot de volledige closing phrase is uitgesproken
               closingPhraseTimer = setTimeout(() => {
                 // Check of er recent nog audio is geweest (bot spreekt nog)
                 const timeSinceLastAudio = Date.now() - lastAudioTime;
 
-                // Als er in de laatste 3 seconden nog audio was, wacht nog langer
-                if (timeSinceLastAudio < 3000) {
+                console.log(
+                  "[DEBUG] Closing phrase timer triggered",
+                  "TimeSinceLastAudio:", timeSinceLastAudio, "ms",
+                  "ClosingPhraseDetected:", closingPhraseDetected
+                );
+
+                // Als er in de laatste 5 seconden nog audio was, wacht nog langer
+                // Dit geeft de bot meer tijd om de volledige closing phrase uit te spreken
+                if (timeSinceLastAudio < 5000) {
                   console.log(
-                    "[ElevenLabs] Bot still speaking, waiting additional 5 seconds..."
+                    "[DEBUG] Bot still speaking (audio within last 5 seconds), waiting additional 8 seconds..."
                   );
                   setTimeout(() => {
-                    safeEndCall("Closing phrase timer - bot finished speaking", {
-                      closingPhraseDetected,
-                      timeSinceLastAudio: Date.now() - lastAudioTime,
-                      phrase: "closing phrase"
-                    });
-                  }, 5000);
+                    const finalTimeSinceAudio = Date.now() - lastAudioTime;
+                    console.log(
+                      "[DEBUG] Final check after additional wait",
+                      "TimeSinceLastAudio:", finalTimeSinceAudio, "ms"
+                    );
+                    
+                    // Nog steeds recent audio? Wacht nog langer
+                    if (finalTimeSinceAudio < 3000) {
+                      console.log(
+                        "[DEBUG] Bot still speaking, waiting another 5 seconds..."
+                      );
+                      setTimeout(() => {
+                        safeEndCall("Closing phrase timer - bot finished speaking (extended wait)", {
+                          closingPhraseDetected,
+                          timeSinceLastAudio: Date.now() - lastAudioTime,
+                          phrase: "closing phrase"
+                        });
+                      }, 5000);
+                    } else {
+                      safeEndCall("Closing phrase timer - bot finished speaking", {
+                        closingPhraseDetected,
+                        timeSinceLastAudio: Date.now() - lastAudioTime,
+                        phrase: "closing phrase"
+                      });
+                    }
+                  }, 8000);
                 } else {
                   // Bot is klaar met praten, sluit de call
-                  safeEndCall("Closing phrase timer - bot finished (10 seconds waited)", {
+                  safeEndCall("Closing phrase timer - bot finished (15 seconds waited)", {
                     closingPhraseDetected,
                     timeSinceLastAudio: Date.now() - lastAudioTime,
                     phrase: "closing phrase"
                   });
                 }
-              }, 10000); // Minimaal 10 seconden delay om bot zijn zin te laten afmaken
+              }, 15000); // Verhoogd naar 15 seconden om de bot meer tijd te geven
             }
             return true; // Closing phrase gevonden, maar hang up gebeurt pas na delay
           }
@@ -583,6 +611,44 @@ fastify.register(async (fastifyInstance) => {
                       );
                       lastActivity = Date.now();
                       lastAudioTime = Date.now(); // Track wanneer laatste audio werd verstuurd
+                      
+                      // KRITIEK: Als closing phrase is gedetecteerd maar er komt nog audio binnen,
+                      // reset de closing timer om te voorkomen dat het gesprek te vroeg eindigt
+                      if (closingPhraseDetected && closingPhraseTimer) {
+                        console.log(
+                          "[DEBUG] ⚠️ Closing phrase detected but new audio received - resetting closing timer",
+                          "TimeSinceLastAudio reset",
+                          "Giving bot more time to finish speaking"
+                        );
+                        clearTimeout(closingPhraseTimer);
+                        
+                        // Reset de timer - wacht opnieuw tot er geen audio meer komt
+                        closingPhraseTimer = setTimeout(() => {
+                          const timeSinceLastAudio = Date.now() - lastAudioTime;
+                          console.log(
+                            "[DEBUG] Closing phrase timer reset triggered",
+                            "TimeSinceLastAudio:", timeSinceLastAudio, "ms"
+                          );
+                          
+                          if (timeSinceLastAudio < 5000) {
+                            // Nog steeds audio binnen laatste 5 sec, wacht langer
+                            setTimeout(() => {
+                              safeEndCall("Closing phrase timer - bot finished speaking (after reset)", {
+                                closingPhraseDetected,
+                                timeSinceLastAudio: Date.now() - lastAudioTime,
+                                phrase: "closing phrase"
+                              });
+                            }, 8000);
+                          } else {
+                            safeEndCall("Closing phrase timer - bot finished (after reset)", {
+                              closingPhraseDetected,
+                              timeSinceLastAudio: Date.now() - lastAudioTime,
+                              phrase: "closing phrase"
+                            });
+                          }
+                        }, 10000); // Wacht 10 seconden na laatste audio
+                      }
+                      
                       resetSilenceTimer();
                     }
 
