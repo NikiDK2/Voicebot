@@ -253,6 +253,7 @@ fastify.register(async (fastifyInstance) => {
                     };
 
                     // CRITICAL: Check if this is a premature end_call (only "Ik activeer" without closing phrase)
+                    // OF als er nog geen closing phrase is gedetecteerd
                     const hasPrematureEndCall = () => {
                       if (!checkForEndCallTool(message)) return false;
 
@@ -274,9 +275,7 @@ fastify.register(async (fastifyInstance) => {
                         agentText.includes("account activ") ||
                         agentText.includes("ik activeer");
 
-                      if (!hasAccountActivation) return false;
-
-                      // Check if there's NO closing phrase in the agent text
+                      // Check if there's a closing phrase in the agent text
                       const closingPhrases = [
                         "dank",
                         "bedankt",
@@ -285,22 +284,37 @@ fastify.register(async (fastifyInstance) => {
                         "fijne dag",
                         "succes met uw accreditatie",
                         "dank u wel voor uw hulp",
+                        // Check ook voor de specifieke closing phrases
+                        "bedankt voor uw hulp. nog een fijne dag",
+                        "bedankt, dokter, en nog een fijne dag",
+                        "dank u voor uw tijd, dokter. fijne dag",
+                        "dank u voor uw tijd, dokter. prettige dag",
+                        "dank u voor uw tijd, dokter. nog een fijne dag",
+                        "bedankt voor uw tijd en succes met uw accreditatie",
+                        "prettige dag nog",
+                        "heel erg bedankt voor uw hulp",
+                        "bedankt voor uw tijd en nog een fijne dag",
                       ];
 
                       const hasClosingPhrase = closingPhrases.some((phrase) =>
                         agentText.includes(phrase)
                       );
 
-                      if (!hasClosingPhrase) {
+                      // BELANGRIJK: "Ik activeer" is GEEN trigger om het gesprek te beëindigen!
+                      // Als er "Ik activeer" in zit → ALTIJD blokkeren (tenzij closingPhraseDetected al true is)
+                      // Dit voorkomt dat het gesprek eindigt na "Ik activeer uw account nu meteen"
+                      if (hasAccountActivation && !closingPhraseDetected) {
                         console.log(
-                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - agent only said 'Ik activeer' without closing phrase, IGNORING end_call tool!",
-                          "Current agent text:", currentAgentText.substring(0, 100),
-                          "Last agent text:", lastAgentText.substring(0, 100)
+                          "[ElevenLabs] ⚠️ PREMATURE end_call detected - agent said 'Ik activeer' - IGNORING end_call tool!",
+                          "'Ik activeer' is GEEN trigger om het gesprek te beëindigen. Wachten op closing phrase.",
+                          "Current agent text:", currentAgentText.substring(0, 150),
+                          "Last agent text:", lastAgentText.substring(0, 150),
+                          "ClosingPhraseDetected:", closingPhraseDetected
                         );
-                        return true; // This IS a premature end_call
+                        return true; // This IS a premature end_call - ALTIJD blokkeren als "Ik activeer" wordt gezegd
                       }
 
-                      return false; // Has closing phrase, so it's OK
+                      return false; // Has closing phrase OR closingPhraseDetected is already true, so it's OK
                     };
 
                     // Only process end_call if it's NOT premature
