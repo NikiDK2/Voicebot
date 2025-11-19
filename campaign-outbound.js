@@ -302,6 +302,7 @@ fastify.register(async (fastifyInstance) => {
               streamSid = msg.start.streamSid;
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
+              callStartTime = Date.now(); // Track when call started
               lastActivity = Date.now();
               console.log(
                 "[DEBUG] [Twilio] ✅ Stream started:",
@@ -343,6 +344,12 @@ fastify.register(async (fastifyInstance) => {
                         prompt: { prompt },
                         first_message: firstMessage,
                       },
+                    },
+                    // CRITICAL: Add metadata with call_sid, contact_id, and campaign_id for webhook matching
+                    metadata: {
+                      call_sid: callSid || null,
+                      contact_id: customParameters?.contact_id ? parseInt(customParameters.contact_id, 10) : null,
+                      campaign_id: customParameters?.campaign_id ? parseInt(customParameters.campaign_id, 10) : null,
                     },
                   };
                   
@@ -1152,22 +1159,47 @@ fastify.register(async (fastifyInstance) => {
                 lastAgentResponse.substring(0, 100)
               );
               
-              // KRITIEK: Check of dit een premature stop is
-              if (!closingPhraseDetected) {
+              // CRITICAL: Log conversation_id before closing (if available)
+              // We need to allow the call to end so ElevenLabs sends webhook
+              // Even if there's no closing phrase, we must end the call after a reasonable time
+              
+              // Check if call has been active for more than 2 minutes - if so, allow it to end
+              const callDuration = Date.now() - (callStartTime || Date.now());
+              const twoMinutes = 2 * 60 * 1000; // 2 minutes in milliseconds
+              
+              if (!closingPhraseDetected && callDuration < twoMinutes) {
                 console.log(
                   "[DEBUG] 🚫 BLOCKED STOP EVENT - NO CLOSING PHRASE! 🚫",
+                  "Call duration:", Math.round(callDuration / 1000), "seconds",
                   "Het gesprek mag ALLEEN eindigen na: 'Nog een fijne dag', 'Prettige dag', 'Fijne dag', of 'succes met uw accreditatie'",
                   "ClosingPhraseDetected:",
                   closingPhraseDetected
                 );
-                // Blokkeer de stop - probeer het gesprek te hervatten
-                // Dit is waarschijnlijk een premature stop van Twilio
+                // Blokkeer de stop alleen als de call korter dan 2 minuten is
+                // Na 2 minuten moeten we de call laten eindigen zodat ElevenLabs een webhook stuurt
                 return; // Stop processing maar sluit de websocket niet
+              } else if (!closingPhraseDetected) {
+                console.log(
+                  "[DEBUG] ⚠️ Allowing call to end after 2+ minutes without closing phrase",
+                  "Call duration:", Math.round(callDuration / 1000), "seconds",
+                  "This ensures ElevenLabs sends post-call analysis webhook"
+                );
               }
+              
+              // Log conversation_id if available before closing
+              console.log(
+                "[DEBUG] [Twilio] 📋 Ending call - CallSid:",
+                callSid,
+                "StreamSid:",
+                streamSid,
+                "ClosingPhraseDetected:",
+                closingPhraseDetected
+              );
               
               if (silenceTimer) clearTimeout(silenceTimer);
               if (closingPhraseTimer) clearTimeout(closingPhraseTimer);
               if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                // Close ElevenLabs connection properly so it can send webhook
                 elevenLabsWs.close();
               }
               break;
