@@ -336,6 +336,7 @@ fastify.register(async (fastifyInstance) => {
                     "First message:", firstMessage.substring(0, 100)
                   );
                   
+                  // Add contact_id and campaign_id to metadata so they're available in webhook
                   const initialConfig = {
                     type: "conversation_initiation_client_data",
                     conversation_config_override: {
@@ -343,6 +344,12 @@ fastify.register(async (fastifyInstance) => {
                         prompt: { prompt },
                         first_message: firstMessage,
                       },
+                    },
+                    // Add metadata with contact_id and campaign_id for webhook matching
+                    metadata: {
+                      contact_id: customParameters?.contact_id || null,
+                      campaign_id: customParameters?.campaign_id || null,
+                      call_sid: callSid || null,
                     },
                   };
                   
