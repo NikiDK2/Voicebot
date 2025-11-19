@@ -94,12 +94,14 @@ fastify.register(async (fastifyInstance) => {
         }
 
         switch (msg.event) {
-          case "start":
+            case "start":
             streamSid = msg.start.streamSid;
             callSid = msg.start.callSid;
             customParameters = msg.start.customParameters;
             lastActivity = Date.now();
             console.log(`[Twilio] Stream started: ${streamSid}`);
+            console.log(`[Twilio] Call SID: ${callSid}`);
+            console.log(`[Twilio] Custom Parameters:`, JSON.stringify(customParameters, null, 2));
 
             const agentId = customParameters?.agent_id;
             if (!agentId) {
@@ -115,12 +117,22 @@ fastify.register(async (fastifyInstance) => {
                 console.log("[ElevenLabs] Connected to Conversational AI");
                 const prompt = customParameters?.prompt || "You are a helpful assistant";
                 const firstMessage = customParameters?.first_message || "";
+                
+                // Add contact_id and campaign_id to metadata so they're available in webhook
                 const initialConfig = {
                   type: "conversation_initiation_client_data",
                   conversation_config_override: {
                     agent: { prompt: { prompt }, first_message: firstMessage },
                   },
+                  // Add metadata with contact_id and campaign_id for webhook matching
+                  metadata: {
+                    contact_id: customParameters?.contact_id || null,
+                    campaign_id: customParameters?.campaign_id || null,
+                    call_sid: callSid || null,
+                  },
                 };
+                
+                console.log(`[ElevenLabs] Sending metadata:`, JSON.stringify(initialConfig.metadata, null, 2));
                 elevenLabsWs.send(JSON.stringify(initialConfig));
               });
 
