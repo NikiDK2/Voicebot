@@ -336,7 +336,6 @@ fastify.register(async (fastifyInstance) => {
                     "First message:", firstMessage.substring(0, 100)
                   );
                   
-                  // Add contact_id and campaign_id to metadata so they're available in webhook
                   const initialConfig = {
                     type: "conversation_initiation_client_data",
                     conversation_config_override: {
@@ -344,12 +343,6 @@ fastify.register(async (fastifyInstance) => {
                         prompt: { prompt },
                         first_message: firstMessage,
                       },
-                    },
-                    // Add metadata with contact_id and campaign_id for webhook matching
-                    metadata: {
-                      contact_id: customParameters?.contact_id || null,
-                      campaign_id: customParameters?.campaign_id || null,
-                      call_sid: callSid || null,
                     },
                   };
                   
@@ -448,6 +441,26 @@ fastify.register(async (fastifyInstance) => {
                         console.log(
                           `[DEBUG] [ElevenLabs] Agent response in message:`,
                           message.agent_response_event.agent_response.substring(0, 150)
+                        );
+                      }
+                      
+                      // CRITICAL: Log conversation_id when received
+                      if (message.conversation_id) {
+                        console.log(
+                          `[DEBUG] [ElevenLabs] 🔑 Conversation ID received:`,
+                          message.conversation_id,
+                          "CallSid:",
+                          callSid
+                        );
+                      }
+                      
+                      // Also check in conversation_initiation_metadata
+                      if (message.type === "conversation_initiation_metadata" && message.conversation_id) {
+                        console.log(
+                          `[DEBUG] [ElevenLabs] 🔑 Conversation ID from initiation metadata:`,
+                          message.conversation_id,
+                          "CallSid:",
+                          callSid
                         );
                       }
                     }
