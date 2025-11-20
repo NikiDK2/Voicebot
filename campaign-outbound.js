@@ -337,12 +337,21 @@ fastify.register(async (fastifyInstance) => {
               customParameters = msg.start.customParameters;
               callStartTime = Date.now(); // Track when call started
               lastActivity = Date.now();
+
+              // Extract phone numbers from Twilio start event
+              const toNumber = msg.start?.to || null;
+              const fromNumber = msg.start?.from || null;
+
               console.log(
                 "[DEBUG] [Twilio] ✅ Stream started:",
                 "StreamSid:",
                 streamSid,
                 "CallSid:",
                 callSid,
+                "To:",
+                toNumber,
+                "From:",
+                fromNumber,
                 "CustomParameters:",
                 JSON.stringify(customParameters, null, 2)
               );
@@ -369,12 +378,24 @@ fastify.register(async (fastifyInstance) => {
                     customParameters?.prompt || "You are a helpful assistant";
                   const firstMessage = customParameters?.first_message || "";
 
+                  // Extract contact_id, campaign_id and call_sid for metadata
+                  const contactId = customParameters?.contact_id || null;
+                  const campaignId = customParameters?.campaign_id || null;
+
                   console.log(
                     "[DEBUG] [ElevenLabs] Sending initial config:",
                     "Prompt length:",
                     prompt.length,
                     "First message:",
-                    firstMessage.substring(0, 100)
+                    firstMessage.substring(0, 100),
+                    "Contact ID:",
+                    contactId,
+                    "Campaign ID:",
+                    campaignId,
+                    "Call SID:",
+                    callSid,
+                    "To:",
+                    toNumber
                   );
 
                   const initialConfig = {
@@ -383,6 +404,16 @@ fastify.register(async (fastifyInstance) => {
                       agent: {
                         prompt: { prompt },
                         first_message: firstMessage,
+                      },
+                    },
+                    metadata: {
+                      contact_id: contactId,
+                      campaign_id: campaignId,
+                      call_sid: callSid,
+                      phone_call: {
+                        to: toNumber || customParameters?.phone_number || null,
+                        from:
+                          fromNumber || customParameters?.from_number || null,
                       },
                     },
                   };
