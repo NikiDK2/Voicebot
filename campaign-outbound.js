@@ -61,6 +61,7 @@ fastify.register(async (fastifyInstance) => {
       let audioBuffer = []; // Buffer audio chunks tot ElevenLabs WebSocket is open
       let elevenLabsReady = false; // Track of ElevenLabs WebSocket is ready
       let silenceTimerResetCount = 0; // Tel hoeveel keer de silence timer is gereset zonder closing phrase
+      let callEnding = false; // Flag om te tracken of de call wordt beëindigd
 
       ws.on("error", console.error);
 
@@ -221,21 +222,32 @@ fastify.register(async (fastifyInstance) => {
           return false; // Blokkeer het einde van het gesprek
         }
         
+        // Zet flag dat call wordt beëindigd - stop met audio verwerken
+        callEnding = true;
+        
+        // Leeg audio buffer - we gaan de call beëindigen
+        audioBuffer = [];
+        
         // Alleen als closingPhraseDetected = true, log en eindig het gesprek
         logCallEnd(reason, details);
         
-        // Stop Twilio stream
+        // Stop Twilio stream eerst - dit stopt nieuwe audio
         if (streamSid) {
           ws.send(JSON.stringify({ event: "stop", streamSid }));
         }
         
-        // Close ElevenLabs WebSocket
-        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-          elevenLabsWs.close();
-        }
-        
-        // Close Twilio WebSocket
-        ws.close();
+        // Wacht kort om laatste audio te verwerken voordat we sluiten
+        setTimeout(() => {
+          // Close ElevenLabs WebSocket
+          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+            elevenLabsWs.close();
+          }
+          
+          // Close Twilio WebSocket
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+        }, 500); // Wacht 500ms om laatste audio te verwerken
         
         return true; // Gesprek succesvol beëindigd
       };
@@ -441,6 +453,11 @@ fastify.register(async (fastifyInstance) => {
                     "First message:", firstMessage.substring(0, 100)
                   );
                   
+                  // Extract contact_id and campaign_id from customParameters
+                  const contactId = customParameters?.contact_id || customParameters?.contactId || null;
+                  const campaignId = customParameters?.campaign_id || customParameters?.campaignId || null;
+                  
+                  // Build initial config with metadata for webhook identification
                   const initialConfig = {
                     type: "conversation_initiation_client_data",
                     conversation_config_override: {
@@ -450,6 +467,22 @@ fastify.register(async (fastifyInstance) => {
                       },
                     },
                   };
+                  
+                  // Add metadata to conversation_config_override so ElevenLabs includes it in webhook
+                  // This ensures 100% accurate contact identification in batch calls
+                  if (callSid || contactId || campaignId) {
+                    initialConfig.conversation_config_override.metadata = {
+                      call_sid: callSid,
+                      contact_id: contactId,
+                      campaign_id: campaignId,
+                    };
+                    console.log(
+                      "[DEBUG] [ElevenLabs] Adding metadata to initial config:",
+                      "call_sid:", callSid,
+                      "contact_id:", contactId,
+                      "campaign_id:", campaignId
+                    );
+                  }
                   
                   console.log(
                     "[DEBUG] [ElevenLabs] Initial config structure:",
@@ -466,10 +499,10 @@ fastify.register(async (fastifyInstance) => {
                     "Buffered audio chunks:", audioBuffer.length
                   );
                   
-                  // Process any buffered audio chunks
-                  while (audioBuffer.length > 0) {
+                  // Process any buffered audio chunks (alleen als call niet wordt beëindigd)
+                  while (audioBuffer.length > 0 && !callEnding) {
                     const bufferedAudio = audioBuffer.shift();
-                    if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                    if (elevenLabsWs?.readyState === WebSocket.OPEN && !callEnding) {
                       elevenLabsWs.send(
                         JSON.stringify({
                           user_audio_chunk: Buffer.from(
@@ -482,6 +515,13 @@ fastify.register(async (fastifyInstance) => {
                         "[DEBUG] [ElevenLabs] ✅ Processed buffered audio chunk"
                       );
                     }
+                  }
+                  // Leeg buffer als call wordt beëindigd
+                  if (callEnding) {
+                    audioBuffer = [];
+                    console.log(
+                      "[DEBUG] [ElevenLabs] ⏸️ Cleared audio buffer - call is ending"
+                    );
                   }
                   updateActivity();
                   resetSilenceTimer();
@@ -1172,6 +1212,16 @@ fastify.register(async (fastifyInstance) => {
               break;
 
             case "media":
+              // Stop met verwerken van audio als call wordt beëindigd
+              if (callEnding) {
+                console.log(
+                  "[DEBUG] [Twilio] ⏸️ Ignoring audio - call is ending",
+                  "StreamSid:", streamSid,
+                  "CallSid:", callSid
+                );
+                break; // Stop met verwerken van deze audio
+              }
+              
               if (elevenLabsWs?.readyState === WebSocket.OPEN && elevenLabsReady) {
                 // Log eerste paar media chunks voor debugging
                 if (Date.now() - lastActivity > 5000 || lastActivity === Date.now()) {
@@ -1192,9 +1242,19 @@ fastify.register(async (fastifyInstance) => {
                     ).toString("base64"),
                   })
                 );
-                lastActivity = Date.now();
+                updateActivity();
                 resetSilenceTimer();
               } else {
+                // Stop met bufferen als call wordt beëindigd
+                if (callEnding) {
+                  console.log(
+                    "[DEBUG] [Twilio] ⏸️ Ignoring audio - call is ending",
+                    "StreamSid:", streamSid,
+                    "CallSid:", callSid
+                  );
+                  break; // Stop met verwerken van deze audio
+                }
+                
                 // Buffer audio if ElevenLabs is not ready yet
                 console.log(
                   "[DEBUG] [Twilio] ⏳ Buffering audio - ElevenLabs not ready yet",
