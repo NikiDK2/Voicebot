@@ -238,14 +238,14 @@ fastify.register(async (fastifyInstance) => {
         
         // Wacht kort om laatste audio te verwerken voordat we sluiten
         setTimeout(() => {
-          // Close ElevenLabs WebSocket
-          if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-            elevenLabsWs.close();
-          }
-          
-          // Close Twilio WebSocket
+        // Close ElevenLabs WebSocket
+        if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+          elevenLabsWs.close();
+        }
+        
+        // Close Twilio WebSocket
           if (ws.readyState === WebSocket.OPEN) {
-            ws.close();
+        ws.close();
           }
         }, 500); // Wacht 500ms om laatste audio te verwerken
         
@@ -426,6 +426,19 @@ fastify.register(async (fastifyInstance) => {
                 "CallSid:", callSid,
                 "CustomParameters:", JSON.stringify(customParameters, null, 2)
               );
+              
+              // CRITICAL DEBUG: Log exact customParameters values for batch call troubleshooting
+              if (customParameters) {
+                console.log(
+                  "[DEBUG] [Twilio] 🔍 CRITICAL - CustomParameters breakdown:",
+                  "contact_id:", customParameters.contact_id || customParameters.contactId || "MISSING",
+                  "campaign_id:", customParameters.campaign_id || customParameters.campaignId || "MISSING",
+                  "agent_id:", customParameters.agent_id || customParameters.agentId || "MISSING",
+                  "Full customParameters:", JSON.stringify(customParameters)
+                );
+              } else {
+                console.error("[DEBUG] [Twilio] ❌ CRITICAL ERROR - customParameters is NULL or undefined!");
+              }
 
               const agentId = customParameters?.agent_id;
               if (!agentId) {
@@ -443,19 +456,48 @@ fastify.register(async (fastifyInstance) => {
                     "StreamSid:", streamSid,
                     "CallSid:", callSid
                   );
-                  const prompt =
+                  let prompt =
                     customParameters?.prompt || "You are a helpful assistant";
-                  const firstMessage = customParameters?.first_message || "";
+                  let firstMessage = customParameters?.first_message || "";
+                  
+                  // Extract contact_id and campaign_id from customParameters
+                  // CRITICAL: These MUST be extracted correctly for batch calls to work
+                  const contactId = customParameters?.contact_id || customParameters?.contactId || null;
+                  const campaignId = customParameters?.campaign_id || customParameters?.campaignId || null;
+                  
+                  // Replace template variables in prompt and firstMessage
+                  // This allows ElevenLabs to extract these values as metadata
+                  const replaceVariables = (text) => {
+                    if (!text) return text;
+                    return text
+                      .replace(/\{\{call_sid\}\}/g, callSid || '')
+                      .replace(/\{\{contact_id\}\}/g, contactId || '')
+                      .replace(/\{\{campaign_id\}\}/g, campaignId || '');
+                  };
+                  
+                  prompt = replaceVariables(prompt);
+                  firstMessage = replaceVariables(firstMessage);
                   
                   console.log(
                     "[DEBUG] [ElevenLabs] Sending initial config:",
                     "Prompt length:", prompt.length,
-                    "First message:", firstMessage.substring(0, 100)
+                    "First message:", firstMessage.substring(0, 100),
+                    "Variables replaced: call_sid=" + (callSid || "NULL"),
+                    "contact_id=" + (contactId || "NULL"),
+                    "campaign_id=" + (campaignId || "NULL")
                   );
                   
-                  // Extract contact_id and campaign_id from customParameters
-                  const contactId = customParameters?.contact_id || customParameters?.contactId || null;
-                  const campaignId = customParameters?.campaign_id || customParameters?.campaignId || null;
+                  // CRITICAL DEBUG: Log what we received
+                  console.log(
+                    "[DEBUG] [ElevenLabs] 🔍 CRITICAL - Extracted values:",
+                    "callSid:", callSid,
+                    "contactId from customParameters:", contactId,
+                    "campaignId from customParameters:", campaignId,
+                    "customParameters.contact_id:", customParameters?.contact_id,
+                    "customParameters.contactId:", customParameters?.contactId,
+                    "customParameters.campaign_id:", customParameters?.campaign_id,
+                    "customParameters.campaignId:", customParameters?.campaignId
+                  );
                   
                   // Build initial config with metadata for webhook identification
                   const initialConfig = {
@@ -468,19 +510,31 @@ fastify.register(async (fastifyInstance) => {
                     },
                   };
                   
-                  // Add metadata to conversation_config_override so ElevenLabs includes it in webhook
-                  // This ensures 100% accurate contact identification in batch calls
-                  if (callSid || contactId || campaignId) {
-                    initialConfig.conversation_config_override.metadata = {
-                      call_sid: callSid,
-                      contact_id: contactId,
-                      campaign_id: campaignId,
-                    };
-                    console.log(
-                      "[DEBUG] [ElevenLabs] Adding metadata to initial config:",
-                      "call_sid:", callSid,
-                      "contact_id:", contactId,
-                      "campaign_id:", campaignId
+                  // ALTIJD metadata toevoegen - zelfs als contactId/campaignId null zijn
+                  // Dit zorgt ervoor dat ElevenLabs de metadata altijd meeneemt in de webhook
+                  // De call_sid is altijd beschikbaar en kan gebruikt worden voor database lookup
+                  initialConfig.conversation_config_override.metadata = {
+                    call_sid: callSid || null,
+                    contact_id: contactId || null,
+                    campaign_id: campaignId || null,
+                  };
+                  
+                  console.log(
+                    "[DEBUG] [ElevenLabs] ✅ Adding metadata to initial config (ALWAYS):",
+                    "call_sid:", callSid || "NULL",
+                    "contact_id:", contactId || "NULL",
+                    "campaign_id:", campaignId || "NULL",
+                    "Full metadata object:", JSON.stringify(initialConfig.conversation_config_override.metadata)
+                  );
+                  
+                  // WARNING if critical values are missing
+                  if (!contactId || !campaignId) {
+                    console.error(
+                      "[DEBUG] [ElevenLabs] ⚠️ WARNING - Missing critical metadata:",
+                      "contact_id:", contactId || "MISSING",
+                      "campaign_id:", campaignId || "MISSING",
+                      "call_sid:", callSid || "MISSING",
+                      "This may cause incorrect contact identification in batch calls!"
                     );
                   }
                   
