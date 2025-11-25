@@ -16,10 +16,21 @@ const PORT = process.env.PORT || 8000;
 
 // Health check endpoint (register BEFORE WebSocket route)
 fastify.get("/", async (request, reply) => {
+  console.log("[DEBUG] [Server] Health check endpoint called");
   return {
     status: "ok",
     service: "RIZIV Outbound Calling Server",
     websocket_endpoint: "/campaign-media-stream",
+    websocket_url: "wss://voicebot-w8gx.onrender.com/campaign-media-stream",
+    timestamp: new Date().toISOString()
+  };
+});
+
+// Test endpoint to verify server is running
+fastify.get("/test", async (request, reply) => {
+  console.log("[DEBUG] [Server] Test endpoint called");
+  return {
+    message: "Server is running and responding",
     timestamp: new Date().toISOString()
   };
 });
