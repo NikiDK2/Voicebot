@@ -29,6 +29,18 @@ fastify.get("/", async (_, reply) => {
   reply.send({
     message: "RIZIV Outbound Calling Server (WebSocket Only)",
     status: "running",
+    websocket_endpoint: "/campaign-media-stream",
+    websocket_url: "wss://voicebot-w8gx.onrender.com/campaign-media-stream",
+  });
+});
+
+// Test endpoint to verify WebSocket route exists
+fastify.get("/test-websocket", async (_, reply) => {
+  reply.send({
+    message: "WebSocket route test",
+    websocket_endpoint: "/campaign-media-stream",
+    websocket_url: "wss://voicebot-w8gx.onrender.com/campaign-media-stream",
+    note: "This endpoint exists. If Twilio cannot connect, check TwiML configuration.",
   });
 });
 
@@ -61,10 +73,22 @@ async function getSignedUrl(agentId) {
 
 // WebSocket route for campaign media stream
 fastify.register(async (fastifyInstance) => {
+  // Add logging BEFORE WebSocket handler to catch connection attempts
+  fastifyInstance.addHook('onRequest', async (request, reply) => {
+    if (request.url === '/campaign-media-stream') {
+      console.log("[DEBUG] [WebSocket] Incoming request to /campaign-media-stream");
+      console.log("[DEBUG] [WebSocket] Method:", request.method);
+      console.log("[DEBUG] [WebSocket] Headers:", JSON.stringify(request.headers, null, 2));
+    }
+  });
+
   fastifyInstance.get(
     "/campaign-media-stream",
     { websocket: true },
     (connection, req) => {
+      console.log("[DEBUG] [WebSocket] ✅ Twilio WebSocket connection established!");
+      console.log("[DEBUG] [WebSocket] Request URL:", req.url);
+      console.log("[DEBUG] [WebSocket] Request headers:", JSON.stringify(req.headers, null, 2));
       console.log("[Server] Twilio connected to campaign media stream");
 
       const ws = connection.socket; // Fastify wraps the socket
@@ -218,8 +242,13 @@ fastify.register(async (fastifyInstance) => {
         }
       };
 
+      ws.on("open", () => {
+        console.log("[DEBUG] [WebSocket] ✅ Twilio WebSocket opened!");
+      });
+
       ws.on("message", (message) => {
         try {
+          console.log("[DEBUG] [WebSocket] ✅ Message received from Twilio!");
           console.log(
             "[Twilio] Raw message received:",
             message.toString().substring(0, 200)
@@ -268,11 +297,18 @@ fastify.register(async (fastifyInstance) => {
         }
       });
 
-      ws.on("close", () => {
+      ws.on("close", (code, reason) => {
+        console.log("[DEBUG] [WebSocket] Twilio WebSocket closed");
+        console.log("[DEBUG] [WebSocket] Close code:", code);
+        console.log("[DEBUG] [WebSocket] Close reason:", reason);
         console.log("[Twilio] Client disconnected");
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
+      });
+
+      ws.on("error", (error) => {
+        console.error("[DEBUG] [WebSocket] ❌ Twilio WebSocket error:", error);
       });
     }
   );
