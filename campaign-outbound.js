@@ -442,19 +442,32 @@ fastify.register(async (fastifyInstance) => {
 
               const agentId = customParameters?.agent_id;
               if (!agentId) {
-                console.error("[ElevenLabs] No agent ID provided");
+                console.error("[DEBUG] [ElevenLabs] ❌ No agent ID provided");
+                console.error("[DEBUG] [ElevenLabs] CustomParameters:", JSON.stringify(customParameters, null, 2));
                 return;
               }
 
-              try {
-                const signedUrl = await getSignedUrl(agentId);
-                elevenLabsWs = new WebSocket(signedUrl);
+              console.log("[DEBUG] [ElevenLabs] 🔄 Starting ElevenLabs connection setup...");
+              console.log("[DEBUG] [ElevenLabs] Agent ID:", agentId);
+              console.log("[DEBUG] [ElevenLabs] StreamSid:", streamSid);
+              console.log("[DEBUG] [ElevenLabs] CallSid:", callSid);
 
-                elevenLabsWs.on("open", () => {
+              try {
+                console.log("[DEBUG] [ElevenLabs] 📞 Calling getSignedUrl...");
+                const signedUrl = await getSignedUrl(agentId);
+                console.log("[DEBUG] [ElevenLabs] ✅ Got signed URL:", signedUrl.substring(0, 100) + "...");
+                
+                console.log("[DEBUG] [ElevenLabs] 🔌 Creating WebSocket connection...");
+                elevenLabsWs = new WebSocket(signedUrl);
+                
+                // Define the initialization function that will be called on open
+                const initializeElevenLabs = () => {
+                  console.log("[DEBUG] [ElevenLabs] 🎉 INITIALIZING ELEVENLABS CONVERSATION!");
                   console.log(
                     "[DEBUG] [ElevenLabs] ✅ Connected to Conversational AI WebSocket",
                     "StreamSid:", streamSid,
-                    "CallSid:", callSid
+                    "CallSid:", callSid,
+                    "WebSocket readyState:", elevenLabsWs?.readyState
                   );
                   let prompt =
                     customParameters?.prompt || "You are a helpful assistant";
@@ -513,17 +526,32 @@ fastify.register(async (fastifyInstance) => {
                   // ALTIJD metadata toevoegen - zelfs als contactId/campaignId null zijn
                   // Dit zorgt ervoor dat ElevenLabs de metadata altijd meeneemt in de webhook
                   // De call_sid is altijd beschikbaar en kan gebruikt worden voor database lookup
+                  // BELANGRIJK: Gebruik callSid uit msg.start.callSid (altijd beschikbaar bij stream start)
+                  const finalCallSid = callSid || customParameters?.call_sid || null;
+                  
                   initialConfig.conversation_config_override.metadata = {
-                    call_sid: callSid || null,
+                    call_sid: finalCallSid,
+                    contact_id: contactId || null,
+                    campaign_id: campaignId || null,
+                  };
+                  
+                  // CRITICAL: Zorg dat metadata ook in conversation_initiation_client_data staat
+                  if (!initialConfig.conversation_initiation_client_data) {
+                    initialConfig.conversation_initiation_client_data = {};
+                  }
+                  initialConfig.conversation_initiation_client_data.metadata = {
+                    call_sid: finalCallSid,
                     contact_id: contactId || null,
                     campaign_id: campaignId || null,
                   };
                   
                   console.log(
                     "[DEBUG] [ElevenLabs] ✅ Adding metadata to initial config (ALWAYS):",
-                    "call_sid:", callSid || "NULL",
+                    "call_sid:", finalCallSid || "NULL",
                     "contact_id:", contactId || "NULL",
                     "campaign_id:", campaignId || "NULL",
+                    "callSid from msg.start:", callSid || "NULL",
+                    "call_sid from customParameters:", customParameters?.call_sid || "NULL",
                     "Full metadata object:", JSON.stringify(initialConfig.conversation_config_override.metadata)
                   );
                   
@@ -579,7 +607,23 @@ fastify.register(async (fastifyInstance) => {
                   }
                   updateActivity();
                   resetSilenceTimer();
+                };
+                
+                // Register the open handler
+                elevenLabsWs.on("open", () => {
+                  console.log("[DEBUG] [ElevenLabs] 🎉 OPEN EVENT TRIGGERED!");
+                  initializeElevenLabs();
                 });
+                
+                // If WebSocket is already open (race condition), call handler immediately
+                if (elevenLabsWs.readyState === WebSocket.OPEN) {
+                  console.log("[DEBUG] [ElevenLabs] ⚠️ WebSocket already OPEN - initializing immediately");
+                  setTimeout(() => initializeElevenLabs(), 50);
+                } else if (elevenLabsWs.readyState === WebSocket.CONNECTING) {
+                  console.log("[DEBUG] [ElevenLabs] ⏳ WebSocket is CONNECTING - waiting for open event");
+                } else {
+                  console.log("[DEBUG] [ElevenLabs] ⚠️ WebSocket state:", elevenLabsWs.readyState, "(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)");
+                }
                 
                 elevenLabsWs.on("error", (error) => {
                   console.error(
