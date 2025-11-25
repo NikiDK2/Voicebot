@@ -43,9 +43,20 @@ fastify.register(async (fastifyInstance) => {
         "Timestamp:",
         new Date().toISOString(),
         "Request URL:",
-        req.url
+        req.url,
+        "Query params:",
+        JSON.stringify(req.query || {})
       );
       const ws = connection.socket;
+      
+      // Log when WebSocket connection is established
+      console.log(
+        "[DEBUG] [Server] 🔌 WebSocket connection established",
+        "ReadyState:",
+        ws.readyState,
+        "Timestamp:",
+        new Date().toISOString()
+      );
 
       let streamSid = null;
       let callSid = null;
@@ -379,12 +390,30 @@ fastify.register(async (fastifyInstance) => {
         try {
           // Log ALLE messages voor debugging (ook media)
           const messageStr = message.toString();
+          
+          // CRITICAL: Log FIRST message separately to catch start event
+          if (!streamSid && !callSid) {
+            console.log(
+              "[DEBUG] [Twilio] 🎯 FIRST MESSAGE RECEIVED (before start event):",
+              "Length:",
+              messageStr.length,
+              "Full message:",
+              messageStr.substring(0, 1000),
+              "Timestamp:",
+              new Date().toISOString()
+            );
+          }
+          
           console.log(
             "[DEBUG] [Twilio] 📨 Raw message received:",
             "Length:",
             messageStr.length,
             "First 200 chars:",
             messageStr.substring(0, 200),
+            "StreamSid (current):",
+            streamSid || "NULL",
+            "CallSid (current):",
+            callSid || "NULL",
             "Timestamp:",
             new Date().toISOString()
           );
