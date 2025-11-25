@@ -1547,10 +1547,21 @@ fastify.register(async (fastifyInstance) => {
   );
 });
 
+// Health check endpoint (BEFORE listen)
+fastify.get("/", async (request, reply) => {
+  return {
+    status: "ok",
+    service: "RIZIV Outbound Calling Server",
+    websocket_endpoint: "/campaign-media-stream",
+    timestamp: new Date().toISOString()
+  };
+});
+
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   if (err) {
     console.error("Error starting server:", err);
     process.exit(1);
   }
   console.log(`[Server] RIZIV Outbound Calling Server running on port ${PORT}`);
+  console.log(`[Server] WebSocket endpoint: wss://voicebot-w8gx.onrender.com/campaign-media-stream`);
 });
