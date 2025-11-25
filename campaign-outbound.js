@@ -14,6 +14,16 @@ fastify.register(fastifyCors, { origin: true });
 
 const PORT = process.env.PORT || 8000;
 
+// Health check endpoint (register BEFORE WebSocket route)
+fastify.get("/", async (request, reply) => {
+  return {
+    status: "ok",
+    service: "RIZIV Outbound Calling Server",
+    websocket_endpoint: "/campaign-media-stream",
+    timestamp: new Date().toISOString()
+  };
+});
+
 // Helper: Get signed URL
 async function getSignedUrl(agentId) {
   try {
@@ -1545,16 +1555,6 @@ fastify.register(async (fastifyInstance) => {
       });
     }
   );
-});
-
-// Health check endpoint (BEFORE listen)
-fastify.get("/", async (request, reply) => {
-  return {
-    status: "ok",
-    service: "RIZIV Outbound Calling Server",
-    websocket_endpoint: "/campaign-media-stream",
-    timestamp: new Date().toISOString()
-  };
 });
 
 fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
