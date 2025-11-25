@@ -62,6 +62,7 @@ fastify.register(async (fastifyInstance) => {
       let elevenLabsReady = false; // Track of ElevenLabs WebSocket is ready
       let silenceTimerResetCount = 0; // Tel hoeveel keer de silence timer is gereset zonder closing phrase
       let callEnding = false; // Flag om te tracken of de call wordt beëindigd
+      let elevenLabsConnectionAttempted = false; // Track of we al geprobeerd hebben ElevenLabs te verbinden
 
       ws.on("error", console.error);
 
@@ -388,28 +389,44 @@ fastify.register(async (fastifyInstance) => {
             new Date().toISOString()
           );
           
-          const msg = JSON.parse(message);
+          let msg;
+          try {
+            msg = JSON.parse(message);
+          } catch (parseError) {
+            console.error("[DEBUG] [Twilio] ❌ JSON Parse Error:", parseError.message);
+            console.error("[DEBUG] [Twilio] Raw message:", messageStr.substring(0, 500));
+            return; // Skip this message
+          }
           
           console.log(
             "[DEBUG] [Twilio] ✅ Parsed message:",
             "Event:",
-            msg.event,
+            msg.event || "NO_EVENT_FIELD",
             "StreamSid:",
-            msg.start?.streamSid || msg.media?.streamSid || streamSid,
+            msg.start?.streamSid || msg.media?.streamSid || streamSid || "NULL",
             "CallSid:",
-            msg.start?.callSid || callSid,
+            msg.start?.callSid || callSid || "NULL",
             "ClosingPhraseDetected:",
             closingPhraseDetected,
             "Timestamp:",
             new Date().toISOString()
           );
           
+          // CRITICAL: Log start event separately with full details
+          if (msg.event === "start") {
+            console.log(
+              "[DEBUG] [Twilio] 🎉 START EVENT RECEIVED!",
+              "Full start object:",
+              JSON.stringify(msg.start, null, 2)
+            );
+          }
+          
           if (msg.event !== "media") {
             console.log(
               "[DEBUG] [Twilio] 📢 Non-media event received:",
-              msg.event,
+              msg.event || "UNDEFINED",
               "Full message:",
-              JSON.stringify(msg).substring(0, 300)
+              JSON.stringify(msg).substring(0, 500)
             );
           }
 
@@ -419,6 +436,7 @@ fastify.register(async (fastifyInstance) => {
               callSid = msg.start.callSid;
               customParameters = msg.start.customParameters;
               callStartTime = Date.now(); // Set call start time when stream starts
+              elevenLabsConnectionAttempted = false; // Reset flag when start event is received
               updateActivity();
               console.log(
                 "[DEBUG] [Twilio] ✅ Stream started:",
@@ -1310,6 +1328,32 @@ fastify.register(async (fastifyInstance) => {
               break;
 
             case "media":
+              // CRITICAL FALLBACK: Als er media events binnenkomen maar er is nog geen start event,
+              // probeer dan de ElevenLabs verbinding alsnog te starten
+              if (!streamSid && msg.media?.streamSid) {
+                streamSid = msg.media.streamSid;
+                console.log("[DEBUG] [Twilio] ⚠️ FALLBACK: Got streamSid from media event:", streamSid);
+              }
+              
+              if (!callSid && msg.media?.callSid) {
+                callSid = msg.media.callSid;
+                console.log("[DEBUG] [Twilio] ⚠️ FALLBACK: Got callSid from media event:", callSid);
+              }
+              
+              // Als we nog geen ElevenLabs verbinding hebben maar wel een callSid hebben,
+              // probeer dan de verbinding te starten met een fallback agent_id
+              if (!elevenLabsWs && callSid && !elevenLabsConnectionAttempted) {
+                console.log("[DEBUG] [Twilio] ⚠️ FALLBACK: No start event received, but media events are coming!");
+                console.log("[DEBUG] [Twilio] ⚠️ Attempting to start ElevenLabs connection with fallback...");
+                
+                // Try to get agent_id from customParameters if available
+                // If not, we'll need to fetch it from database (requires API call)
+                // For now, log this as a critical error
+                console.error("[DEBUG] [Twilio] ❌ CRITICAL: Cannot start ElevenLabs without agent_id!");
+                console.error("[DEBUG] [Twilio] ❌ Missing start event - ElevenLabs connection cannot be established");
+                elevenLabsConnectionAttempted = true; // Prevent multiple attempts
+              }
+              
               // Stop met verwerken van audio als call wordt beëindigd
               if (callEnding) {
                 console.log(
