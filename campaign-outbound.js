@@ -1564,6 +1564,60 @@ fastify.get(
                             "Reason:", reason?.toString() || "No reason provided"
                           );
                           elevenLabsReady = false;
+                          elevenLabsSetupAttempted = false; // Reset zodat we opnieuw kunnen proberen
+                        });
+                        
+                        // CRITICAL: Add message handler to forward audio from ElevenLabs to Twilio
+                        // This was missing in the fallback code!
+                        elevenLabsWs.on("message", (data) => {
+                          try {
+                            const dataStr = data.toString();
+                            const message = JSON.parse(data);
+                            
+                            // Handle audio - forward to Twilio
+                            if (message.type === "audio" && streamSid) {
+                              const audioPayload = message.audio?.chunk || message.audio_event?.audio_base_64;
+                              
+                              if (audioPayload) {
+                                ws.send(
+                                  JSON.stringify({
+                                    event: "media",
+                                    streamSid,
+                                    media: {
+                                      payload: audioPayload,
+                                    },
+                                  })
+                                );
+                                updateActivity();
+                                lastAudioTime = Date.now();
+                                resetSilenceTimer();
+                              }
+                            }
+                            
+                            // Handle agent response text
+                            if (message.type === "agent_response") {
+                              const text = message.agent_response_event?.agent_response || "";
+                              console.log(`[DEBUG] [Agent] FALLBACK: ${text}`);
+                              lastAgentResponse = text;
+                              
+                              // Check for closing phrases
+                              checkForClosingPhrase(text);
+                              lastActivity = Date.now();
+                              resetSilenceTimer();
+                            }
+                            
+                            // Handle user transcript
+                            if (message.type === "user_transcript") {
+                              console.log(`[DEBUG] [User] FALLBACK: ${message.user_transcription_event?.user_transcript}`);
+                              lastActivity = Date.now();
+                              resetSilenceTimer();
+                            }
+                          } catch (error) {
+                            console.error(
+                              "[DEBUG] [ElevenLabs] ❌ FALLBACK: Error in message handler:",
+                              error.message
+                            );
+                          }
                         });
                       } catch (error) {
                         console.error(
