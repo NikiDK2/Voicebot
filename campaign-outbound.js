@@ -38,6 +38,19 @@ fastify.get("/test-websocket-route", async (request, reply) => {
 // Helper: Get signed URL
 async function getSignedUrl(agentId) {
   try {
+    if (!process.env.ELEVENLABS_API_KEY) {
+      const error = new Error("ELEVENLABS_API_KEY is not set in environment variables");
+      console.error("[DEBUG] [ElevenLabs] ❌ CRITICAL ERROR:", error.message);
+      throw error;
+    }
+    
+    console.log(
+      "[DEBUG] [ElevenLabs] 🔄 Requesting signed URL from ElevenLabs API",
+      "Agent ID:", agentId,
+      "API Key present:", !!process.env.ELEVENLABS_API_KEY,
+      "API Key length:", process.env.ELEVENLABS_API_KEY?.length || 0
+    );
+    
     const response = await fetch(
       `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
       {
@@ -45,25 +58,49 @@ async function getSignedUrl(agentId) {
         headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY },
       }
     );
-    if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(
+        "[DEBUG] [ElevenLabs] ❌ ElevenLabs API error:",
+        "Status:", response.status,
+        "StatusText:", response.statusText,
+        "Response:", errorText
+      );
+      throw new Error(`ElevenLabs API failed: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+    
     const data = await response.json();
+    if (!data.signed_url) {
+      console.error("[DEBUG] [ElevenLabs] ❌ No signed_url in response:", JSON.stringify(data));
+      throw new Error("No signed_url in ElevenLabs API response");
+    }
+    
+    console.log(
+      "[DEBUG] [ElevenLabs] ✅ Successfully got signed URL",
+      "URL length:", data.signed_url?.length || 0
+    );
+    
     return data.signed_url;
   } catch (error) {
-    console.error("Error getting signed URL:", error);
+    console.error(
+      "[DEBUG] [ElevenLabs] ❌ Error getting signed URL:",
+      error.message,
+      "Stack:", error.stack
+    );
     throw error;
   }
 }
 
-// Register WebSocket route directly (not nested in another register)
-fastify.register(async function (fastifyInstance) {
-  fastifyInstance.get(
-    "/campaign-media-stream",
-    { websocket: true },
-    (connection, req) => {
-      console.log(
-        "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
-        "Timestamp:",
-        new Date().toISOString(),
+// Register WebSocket route directly on fastify (not nested in register)
+fastify.get(
+  "/campaign-media-stream",
+  { websocket: true },
+  (connection, req) => {
+    console.log(
+      "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
+      "Timestamp:",
+      new Date().toISOString(),
         "Request URL:",
         req.url,
         "Method:",
@@ -94,6 +131,7 @@ fastify.register(async function (fastifyInstance) {
       let lastAgentResponse = ""; // Track laatste agent response om premature end_call te detecteren
       let audioBuffer = []; // Buffer audio chunks tot ElevenLabs WebSocket is open
       let elevenLabsReady = false; // Track of ElevenLabs WebSocket is ready
+      let elevenLabsSetupAttempted = false; // Track of we al geprobeerd hebben om ElevenLabs op te zetten (voor fallback)
       let silenceTimerResetCount = 0; // Tel hoeveel keer de silence timer is gereset zonder closing phrase
       let callEnding = false; // Flag om te tracken of de call wordt beëindigd
 
@@ -1357,6 +1395,143 @@ fastify.register(async function (fastifyInstance) {
                 break; // Stop met verwerken van deze audio
               }
               
+              // FALLBACK: Als we media ontvangen maar nog geen ElevenLabs verbinding hebben,
+              // probeer de verbinding alsnog op te zetten (als "start" event niet werd ontvangen)
+              if (!elevenLabsWs || elevenLabsWs.readyState !== WebSocket.OPEN || !elevenLabsReady) {
+                if (!elevenLabsSetupAttempted && callSid) {
+                  elevenLabsSetupAttempted = true; // Voorkom meerdere pogingen
+                  console.log(
+                    "[DEBUG] [ElevenLabs] ⚠️ FALLBACK: Media received but ElevenLabs not connected",
+                    "Attempting to setup connection now...",
+                    "CallSid:", callSid,
+                    "StreamSid:", streamSid || "UNKNOWN"
+                  );
+                  
+                  // Probeer agent_id te halen uit customParameters of gebruik default
+                  // Default agent_id uit ELEVENLABS-SETUP.md: agent_6001k7v9jf03ecnvgk57qvkfdx4
+                  const agentId = customParameters?.agent_id || customParameters?.agentId || process.env.DEFAULT_AGENT_ID || "agent_6001k7v9jf03ecnvgk57qvkfdx4";
+                  
+                  if (agentId) {
+                    console.log(
+                      "[DEBUG] [ElevenLabs] 🔄 FALLBACK: Setting up ElevenLabs with agent_id:",
+                      agentId
+                    );
+                    
+                    // Setup ElevenLabs verbinding (gebruik dezelfde code als in "start" case)
+                    (async () => {
+                      try {
+                        const signedUrl = await getSignedUrl(agentId);
+                        console.log("[DEBUG] [ElevenLabs] ✅ FALLBACK: Got signed URL");
+                        elevenLabsWs = new WebSocket(signedUrl);
+                        
+                        elevenLabsWs.on("open", () => {
+                          console.log(
+                            "[DEBUG] [ElevenLabs] ✅ FALLBACK: Connected to Conversational AI WebSocket",
+                            "StreamSid:", streamSid,
+                            "CallSid:", callSid
+                          );
+                          
+                          let prompt = customParameters?.prompt || "You are a helpful assistant";
+                          let firstMessage = customParameters?.first_message || "";
+                          
+                          const contactId = customParameters?.contact_id || customParameters?.contactId || null;
+                          const campaignId = customParameters?.campaign_id || customParameters?.campaignId || null;
+                          
+                          const replaceVariables = (text) => {
+                            if (!text) return text;
+                            return text
+                              .replace(/\{\{call_sid\}\}/g, callSid || '')
+                              .replace(/\{\{contact_id\}\}/g, contactId || '')
+                              .replace(/\{\{campaign_id\}\}/g, campaignId || '');
+                          };
+                          
+                          prompt = replaceVariables(prompt);
+                          firstMessage = replaceVariables(firstMessage);
+                          
+                          const initialConfig = {
+                            type: "conversation_initiation_client_data",
+                            conversation_config_override: {
+                              agent: {
+                                prompt: { prompt },
+                                first_message: firstMessage,
+                              },
+                              metadata: {
+                                call_sid: callSid,
+                                contact_id: contactId || null,
+                                campaign_id: campaignId || null,
+                              },
+                            },
+                          };
+                          
+                          elevenLabsWs.send(JSON.stringify(initialConfig));
+                          console.log("[DEBUG] [ElevenLabs] ✅ FALLBACK: Initial config sent");
+                          elevenLabsReady = true;
+                          
+                          // Process buffered audio
+                          while (audioBuffer.length > 0 && !callEnding) {
+                            const bufferedAudio = audioBuffer.shift();
+                            if (elevenLabsWs?.readyState === WebSocket.OPEN && !callEnding) {
+                              elevenLabsWs.send(
+                                JSON.stringify({
+                                  user_audio_chunk: Buffer.from(
+                                    bufferedAudio.payload,
+                                    "base64"
+                                  ).toString("base64"),
+                                })
+                              );
+                            }
+                          }
+                        });
+                        
+                        elevenLabsWs.on("error", (error) => {
+                          console.error(
+                            "[DEBUG] [ElevenLabs] ❌ FALLBACK: WebSocket error:",
+                            error.message || error
+                          );
+                        });
+                        
+                        elevenLabsWs.on("close", (code, reason) => {
+                          console.log(
+                            "[DEBUG] [ElevenLabs] 🚨 FALLBACK: WebSocket CLOSED:",
+                            "Code:", code,
+                            "Reason:", reason?.toString() || "No reason provided"
+                          );
+                          elevenLabsReady = false;
+                        });
+                      } catch (error) {
+                        console.error(
+                          "[DEBUG] [ElevenLabs] ❌ FALLBACK: Setup error:",
+                          error.message
+                        );
+                      }
+                    })();
+                  } else {
+                    console.error(
+                      "[DEBUG] [ElevenLabs] ❌ FALLBACK: No agent_id available, cannot setup connection"
+                    );
+                  }
+                }
+                
+                // Buffer audio terwijl we wachten op ElevenLabs verbinding
+                if (msg.media && msg.media.payload) {
+                  audioBuffer.push({
+                    payload: msg.media.payload,
+                    timestamp: Date.now(),
+                  });
+                  if (audioBuffer.length > 50) {
+                    audioBuffer.shift(); // Remove oldest if buffer too large
+                  }
+                  console.log(
+                    "[DEBUG] [Twilio] ⏳ Buffering audio - ElevenLabs not ready yet",
+                    "ReadyState:", elevenLabsWs?.readyState,
+                    "ElevenLabsReady:", elevenLabsReady,
+                    "StreamSid:", streamSid,
+                    "Buffer size:", audioBuffer.length
+                  );
+                }
+                break; // Stop processing deze media chunk tot ElevenLabs klaar is
+              }
+              
               if (elevenLabsWs?.readyState === WebSocket.OPEN && elevenLabsReady) {
                 // Log eerste paar media chunks voor debugging
                 if (Date.now() - lastActivity > 5000 || lastActivity === Date.now()) {
@@ -1494,9 +1669,9 @@ fastify.register(async function (fastifyInstance) {
       });
     }
   );
-});
 
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
+// Start server
+fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
   if (err) {
     console.error("Error starting server:", err);
     process.exit(1);
@@ -1504,5 +1679,22 @@ fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   console.log(`[Server] RIZIV Outbound Calling Server running on port ${PORT}`);
   console.log(`[Server] WebSocket endpoint: wss://voicebot-w8gx.onrender.com/campaign-media-stream`);
   console.log(`[Server] Health check: https://voicebot-w8gx.onrender.com/`);
+  
+  // Check critical environment variables
+  if (!process.env.ELEVENLABS_API_KEY) {
+    console.error(`[Server] ❌ CRITICAL: ELEVENLABS_API_KEY is not set!`);
+    console.error(`[Server] ElevenLabs WebSocket connections will fail without this key.`);
+  } else {
+    console.log(`[Server] ✅ ELEVENLABS_API_KEY is set (length: ${process.env.ELEVENLABS_API_KEY.length} chars)`);
+  }
+  
   console.log(`[Server] Ready to handle ElevenLabs calls`);
+  
+  // Debug: List all registered routes
+  try {
+    const routes = fastify.printRoutes();
+    console.log(`[Server] Registered routes:`, routes);
+  } catch (e) {
+    console.log(`[Server] Could not print routes:`, e.message);
+  }
 });
