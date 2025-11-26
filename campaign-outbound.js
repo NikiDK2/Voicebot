@@ -1722,6 +1722,9 @@ fastify.get(
         if (elevenLabsWs?.readyState === WebSocket.OPEN) {
           elevenLabsWs.close();
         }
+        // Reset flags voor volgende call
+        elevenLabsSetupAttempted = false;
+        elevenLabsReady = false;
       });
       
       ws.on("error", (error) => {
