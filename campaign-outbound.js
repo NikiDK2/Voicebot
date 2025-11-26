@@ -35,6 +35,25 @@ fastify.get("/test-websocket-route", async (request, reply) => {
   });
 });
 
+// Route info endpoint - toont alle geregistreerde routes
+fastify.get("/routes", async (request, reply) => {
+  try {
+    const routes = fastify.printRoutes();
+    return reply.send({ 
+      message: "Registered routes",
+      routes: routes,
+      websocket_route: "/campaign-media-stream",
+      note: "WebSocket routes may not appear in this list but should still work"
+    });
+  } catch (e) {
+    return reply.send({ 
+      message: "Could not print routes",
+      error: e.message,
+      websocket_route: "/campaign-media-stream"
+    });
+  }
+});
+
 // Helper: Get signed URL
 async function getSignedUrl(agentId) {
   try {
@@ -92,11 +111,12 @@ async function getSignedUrl(agentId) {
   }
 }
 
-// Register WebSocket route directly on fastify (not nested in register)
-fastify.get(
-  "/campaign-media-stream",
-  { websocket: true },
-  (connection, req) => {
+// Register WebSocket route within a register block (more reliable)
+fastify.register(async function (fastifyInstance) {
+  fastifyInstance.get(
+    "/campaign-media-stream",
+    { websocket: true },
+    (connection, req) => {
     console.log(
       "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
       "Timestamp:",
@@ -1793,6 +1813,7 @@ fastify.get(
       });
     }
   );
+}); // End of fastify.register block for WebSocket route
 
 // Start server
 fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
