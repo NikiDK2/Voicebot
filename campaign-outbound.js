@@ -9,7 +9,7 @@ dotenv.config();
 
 const fastify = Fastify({ logger: true });
 fastify.register(fastifyFormBody);
-fastify.register(fastifyWs); // Register WebSocket plugin first
+fastify.register(fastifyWs); // Register WebSocket plugin
 fastify.register(fastifyCors, { origin: true });
 
 const PORT = process.env.PORT || 8000;
@@ -111,32 +111,33 @@ async function getSignedUrl(agentId) {
   }
 }
 
-// Register WebSocket route
-fastify.register(async function (fastifyInstance) {
-  // WebSocket route for Twilio Media Streams
-  fastifyInstance.get(
-    "/campaign-media-stream",
-    { websocket: true },
-    (connection, req) => {
-    console.log(
-      "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
-      "Timestamp:",
-      new Date().toISOString(),
-        "Request URL:",
-        req.url,
-        "Method:",
-        req.method,
-        "Headers:",
-        JSON.stringify(req.headers)
-      );
+// Register WebSocket route directly on fastify (after plugin registration)
+fastify.get(
+  "/campaign-media-stream",
+  { websocket: true },
+  (connection, req) => {
+      // Use connection.req for request info in Fastify WebSocket
+      const request = connection.req || req;
       const ws = connection.socket;
+      
+      console.log(
+        "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
+        "Timestamp:",
+        new Date().toISOString(),
+        "Request URL:",
+        request?.url || "unknown",
+        "Method:",
+        request?.method || "unknown",
+        "Headers:",
+        JSON.stringify(request?.headers || {})
+      );
       
       // Log immediately when WebSocket connection is established
       console.log(
         "[DEBUG] [Server] 🔌 WebSocket connection established",
         "ReadyState:", ws.readyState,
         "Protocol:", ws.protocol || "none",
-        "URL:", req.url
+        "URL:", request?.url || "unknown"
       );
 
       let streamSid = null;
@@ -772,12 +773,25 @@ fastify.register(async function (fastifyInstance) {
                     "StreamSid:", streamSid,
                     "CallSid:", callSid,
                     "ReadyState:", elevenLabsWs?.readyState,
-                    "ElevenLabsReady flag:", elevenLabsReady
+                    "ElevenLabsReady flag:", elevenLabsReady,
+                    "CallEnding:", callEnding
                   );
                   // Reset ready flag when WebSocket closes
                   elevenLabsReady = false;
                   // Reset setup attempt flag zodat fallback opnieuw kan proberen
                   elevenLabsSetupAttempted = false;
+                  
+                  // CRITICAL: If call is not ending, try to reconnect
+                  if (!callEnding && streamSid && customParameters?.agent_id) {
+                    console.log(
+                      "[DEBUG] [ElevenLabs] 🔄 Attempting to reconnect ElevenLabs WebSocket...",
+                      "StreamSid:", streamSid,
+                      "AgentId:", customParameters.agent_id
+                    );
+                    // Reset flag to allow reconnection
+                    elevenLabsSetupAttempted = false;
+                    // Note: Reconnection will be handled by the fallback mechanism in media event handler
+                  }
                 });
 
                 elevenLabsWs.on("message", (data) => {
@@ -1674,7 +1688,29 @@ fastify.register(async function (fastifyInstance) {
                 break; // Stop processing deze media chunk tot ElevenLabs klaar is
               }
               
-              if (elevenLabsWs?.readyState === WebSocket.OPEN && elevenLabsReady) {
+              // CRITICAL: Always check readyState, not just the flag
+              // Reset flag if WebSocket is closed
+              if (elevenLabsWs && elevenLabsWs.readyState !== WebSocket.OPEN) {
+                if (elevenLabsReady) {
+                  console.log(
+                    "[DEBUG] [Twilio] ⚠️ ElevenLabs WebSocket is CLOSED but flag was true - resetting flag",
+                    "ReadyState:", elevenLabsWs.readyState,
+                    "StreamSid:", streamSid
+                  );
+                  elevenLabsReady = false;
+                }
+              }
+              
+              if (elevenLabsWs?.readyState === WebSocket.OPEN) {
+                // Update flag to match actual state
+                if (!elevenLabsReady) {
+                  elevenLabsReady = true;
+                  console.log(
+                    "[DEBUG] [Twilio] ✅ ElevenLabs WebSocket is OPEN - flag updated",
+                    "StreamSid:", streamSid
+                  );
+                }
+                
                 // Log eerste paar media chunks voor debugging
                 if (Date.now() - lastActivity > 5000 || lastActivity === Date.now()) {
                   console.log(
@@ -1814,7 +1850,6 @@ fastify.register(async function (fastifyInstance) {
       });
     }
   );
-}); // End of fastify.register block for WebSocket plugin and route
 
 // Start server
 fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
