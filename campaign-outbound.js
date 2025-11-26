@@ -130,10 +130,19 @@ fastify.get(
       let closingPhraseDetected = false;
       let lastAgentResponse = ""; // Track laatste agent response om premature end_call te detecteren
       let audioBuffer = []; // Buffer audio chunks tot ElevenLabs WebSocket is open
-      let elevenLabsReady = false; // Track of ElevenLabs WebSocket is ready
+      let elevenLabsReady = false; // Track of ElevenLabs WebSocket is ready (MUST be false initially)
       let elevenLabsSetupAttempted = false; // Track of we al geprobeerd hebben om ElevenLabs op te zetten (voor fallback)
       let silenceTimerResetCount = 0; // Tel hoeveel keer de silence timer is gereset zonder closing phrase
       let callEnding = false; // Flag om te tracken of de call wordt beëindigd
+      
+      // CRITICAL: Log initial state
+      console.log(
+        "[DEBUG] [Server] 🔌 New WebSocket connection initialized",
+        "elevenLabsReady:", elevenLabsReady,
+        "elevenLabsSetupAttempted:", elevenLabsSetupAttempted,
+        "elevenLabsWs:", elevenLabsWs ? "exists" : "null",
+        "Timestamp:", new Date().toISOString()
+      );
 
       ws.on("error", console.error);
 
@@ -450,17 +459,46 @@ fastify.get(
         try {
           // Log ALLE messages voor debugging (ook media)
           const messageStr = message.toString();
-          console.log(
-            "[DEBUG] [Twilio] 📨 Raw message received:",
-            "Length:",
-            messageStr.length,
-            "First 200 chars:",
-            messageStr.substring(0, 200),
-            "Timestamp:",
-            new Date().toISOString()
-          );
           
           const msg = JSON.parse(message);
+          
+          // Log "start" event EXTRA duidelijk
+          if (msg.event === "start") {
+            console.log(
+              "[DEBUG] [Twilio] 🎯🎯🎯 START EVENT ONTVANGEN! 🎯🎯🎯",
+              "StreamSid:", msg.start?.streamSid,
+              "CallSid:", msg.start?.callSid,
+              "CustomParameters:", JSON.stringify(msg.start?.customParameters || {}, null, 2),
+              "Timestamp:", new Date().toISOString()
+            );
+          }
+          
+          // Alleen media events volledig loggen (anders te veel spam)
+          if (msg.event === "media") {
+            // Log alleen eerste paar media chunks
+            if (!streamSid || Date.now() - lastActivity > 5000) {
+              console.log(
+                "[DEBUG] [Twilio] 📨 Raw message received:",
+                "Length:",
+                messageStr.length,
+                "First 200 chars:",
+                messageStr.substring(0, 200),
+                "Timestamp:",
+                new Date().toISOString()
+              );
+            }
+          } else {
+            // Log alle non-media events volledig
+            console.log(
+              "[DEBUG] [Twilio] 📨 Raw message received:",
+              "Length:",
+              messageStr.length,
+              "First 200 chars:",
+              messageStr.substring(0, 200),
+              "Timestamp:",
+              new Date().toISOString()
+            );
+          }
           
           console.log(
             "[DEBUG] [Twilio] ✅ Parsed message:",
@@ -707,6 +745,8 @@ fastify.get(
                   );
                   // Reset ready flag when WebSocket closes
                   elevenLabsReady = false;
+                  // Reset setup attempt flag zodat fallback opnieuw kan proberen
+                  elevenLabsSetupAttempted = false;
                 });
 
                 elevenLabsWs.on("message", (data) => {
@@ -1397,7 +1437,8 @@ fastify.get(
               
               // FALLBACK: Als we media ontvangen maar nog geen ElevenLabs verbinding hebben,
               // probeer de verbinding alsnog op te zetten (als "start" event niet werd ontvangen)
-              if (!elevenLabsWs || elevenLabsWs.readyState !== WebSocket.OPEN || !elevenLabsReady) {
+              // Check: WebSocket moet OPEN zijn (readyState === 1), anders is het niet werkend
+              if (!elevenLabsWs || elevenLabsWs.readyState !== WebSocket.OPEN) {
                 if (!elevenLabsSetupAttempted && callSid) {
                   elevenLabsSetupAttempted = true; // Voorkom meerdere pogingen
                   console.log(
