@@ -513,32 +513,17 @@ fastify.register(async (fastifyInstance) => {
                   // ALTIJD metadata toevoegen - zelfs als contactId/campaignId null zijn
                   // Dit zorgt ervoor dat ElevenLabs de metadata altijd meeneemt in de webhook
                   // De call_sid is altijd beschikbaar en kan gebruikt worden voor database lookup
-                  // BELANGRIJK: Gebruik callSid uit msg.start.callSid (altijd beschikbaar bij stream start)
-                  const finalCallSid = callSid || customParameters?.call_sid || null;
-                  
                   initialConfig.conversation_config_override.metadata = {
-                    call_sid: finalCallSid,
-                    contact_id: contactId || null,
-                    campaign_id: campaignId || null,
-                  };
-                  
-                  // CRITICAL: Zorg dat metadata ook in conversation_initiation_client_data staat
-                  if (!initialConfig.conversation_initiation_client_data) {
-                    initialConfig.conversation_initiation_client_data = {};
-                  }
-                  initialConfig.conversation_initiation_client_data.metadata = {
-                    call_sid: finalCallSid,
+                    call_sid: callSid || null,
                     contact_id: contactId || null,
                     campaign_id: campaignId || null,
                   };
                   
                   console.log(
                     "[DEBUG] [ElevenLabs] ✅ Adding metadata to initial config (ALWAYS):",
-                    "call_sid:", finalCallSid || "NULL",
+                    "call_sid:", callSid || "NULL",
                     "contact_id:", contactId || "NULL",
                     "campaign_id:", campaignId || "NULL",
-                    "callSid from msg.start:", callSid || "NULL",
-                    "call_sid from customParameters:", customParameters?.call_sid || "NULL",
                     "Full metadata object:", JSON.stringify(initialConfig.conversation_config_override.metadata)
                   );
                   
