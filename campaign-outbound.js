@@ -7,10 +7,18 @@ import fastifyCors from "@fastify/cors";
 
 dotenv.config();
 
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({ 
+  logger: true,
+  // CRITICAL: Enable trust proxy for Render.com (behind proxy/load balancer)
+  trustProxy: true
+});
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs); // Register WebSocket plugin FIRST (like simple-websocket-server.js)
-fastify.register(fastifyCors, { origin: true });
+fastify.register(fastifyCors, { 
+  origin: true,
+  // CRITICAL: Allow WebSocket connections from Twilio
+  credentials: true
+});
 
 const PORT = process.env.PORT || 8000;
 
@@ -111,8 +119,30 @@ async function getSignedUrl(agentId) {
   }
 }
 
+// CRITICAL: Add HTTP endpoint to log ALL connection attempts (including failed WebSocket upgrades)
+fastify.get("/campaign-media-stream", async (request, reply) => {
+  console.log(
+    "[DEBUG] [Server] 🚨 HTTP GET naar WebSocket endpoint!",
+    "Dit betekent dat iemand (mogelijk Twilio) probeert HTTP GET te gebruiken in plaats van WebSocket upgrade",
+    "URL:", request.url,
+    "Headers:", JSON.stringify(request.headers),
+    "IP:", request.ip,
+    "User-Agent:", request.headers['user-agent'] || "unknown"
+  );
+  
+  // Return 426 Upgrade Required - dit is de correcte response voor WebSocket upgrades
+  reply.code(426).send({
+    error: "WebSocket upgrade required",
+    message: "This endpoint requires a WebSocket upgrade. Use wss:// protocol.",
+    websocket_url: "wss://voicebot-w8gx.onrender.com/campaign-media-stream"
+  });
+});
+
 // Register WebSocket route (like simple-websocket-server.js)
 fastify.register(async (fastifyInstance) => {
+  // CRITICAL: Log when WebSocket route is being registered
+  console.log("[DEBUG] [Server] 🔌 Registering WebSocket route: /campaign-media-stream");
+  
   fastifyInstance.get(
     "/campaign-media-stream",
     { websocket: true },
@@ -120,6 +150,17 @@ fastify.register(async (fastifyInstance) => {
       // Use connection.req for request info in Fastify WebSocket
       const request = connection.req || req;
       const ws = connection.socket;
+      
+      // CRITICAL: Log WebSocket upgrade attempt IMMEDIATELY
+      console.log(
+        "[DEBUG] [Server] 🎯🎯🎯 WEBSOCKET UPGRADE ATTEMPT! 🎯🎯🎯",
+        "Timestamp:", new Date().toISOString(),
+        "URL:", request?.url || "unknown",
+        "Method:", request?.method || "unknown",
+        "Headers:", JSON.stringify(request?.headers || {}),
+        "IP:", request?.socket?.remoteAddress || "unknown",
+        "User-Agent:", request?.headers?.['user-agent'] || "unknown"
+      );
       
       console.log(
         "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
