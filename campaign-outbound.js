@@ -67,8 +67,9 @@ async function getSignedUrl(agentId) {
 
 // WebSocket route
 fastify.register(async (fastifyInstance) => {
-  fastifyInstance.get("/campaign-media-stream", { websocket: true }, (connection, req) => {
-    console.log("[Server] ✅ Twilio connected to campaign media stream");
+  // Handler function to reuse for both routes
+  const websocketHandler = (connection, req) => {
+    console.log(`[Server] ✅ Twilio connected to ${req.url}`);
     
     const ws = connection.socket;
     let streamSid = null;
@@ -172,7 +173,13 @@ fastify.register(async (fastifyInstance) => {
       console.log("[Twilio] Client disconnected");
       if (elevenLabsWs?.readyState === WebSocket.OPEN) elevenLabsWs.close();
     });
-  });
+  };
+
+  // Register primary route
+  fastifyInstance.get("/campaign-media-stream", { websocket: true }, websocketHandler);
+  
+  // Register V2 route (fallback/fix)
+  fastifyInstance.get("/campaign-media-stream-v2", { websocket: true }, websocketHandler);
 });
 
 // Start server
