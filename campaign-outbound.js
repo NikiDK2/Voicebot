@@ -29,7 +29,6 @@ fastify.get("/", async (_, reply) => {
   reply.send({ status: "running", timestamp: new Date().toISOString() });
 });
 
-// Helper to get signed URL from ElevenLabs
 async function getSignedUrl(agentId) {
   try {
     const response = await fetch(
@@ -45,18 +44,24 @@ async function getSignedUrl(agentId) {
   }
 }
 
-// Helper to fetch full call configuration (prompt) from PHP API
-async function getCallConfig(campaignId, contactId, callSid, agentId) {
+// Helper: Get Prompt from PHP API
+async function getPromptFromAPI(campaignId, contactId) {
   try {
-    const apiUrl = `https://innovationstudio.be/Scraper/get-call-config.php?campaign_id=${campaignId}&contact_id=${contactId}&call_sid=${callSid}&agent_id=${agentId}`;
-    console.log(`[Server] Fetching config from: ${apiUrl}`);
-    const response = await fetch(apiUrl);
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const url = `https://innovationstudio.be/Scraper/get-prompt-api.php?campaign_id=${campaignId}&contact_id=${contactId}`;
+    console.log(`[Server] Fetching prompt from: ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+    
     const data = await response.json();
     if (data.error) throw new Error(data.error);
-    return data;
+    
+    return { 
+      prompt: data.prompt, 
+      first_message: data.first_message 
+    };
   } catch (error) {
-    console.error("[Server] Error fetching call config:", error);
+    console.error("[Server] Error fetching prompt:", error);
     return null;
   }
 }
@@ -84,29 +89,32 @@ fastify.register(async (fastifyInstance) => {
 
         if (msg.event === "start") {
           streamSid = msg.start.streamSid;
-          const callSid = msg.start.callSid;
-          const params = msg.start.customParameters;
           console.log(`[Twilio] Stream started: ${streamSid}`);
           
-          // Default values from Twilio params (which might be truncated)
-          let prompt = params?.prompt || "You are a helpful assistant";
-          let firstMessage = params?.first_message || "";
+          const params = msg.start.customParameters;
           const agentId = params?.agent_id;
+          
+          // LOGIC TO GET PROMPT
+          let prompt = params?.prompt;
+          let firstMessage = params?.first_message;
 
-          // FETCH FULL PROMPT FROM API if IDs are present
+          // If prompt is missing OR truncated OR we want to be safe: fetch from API
+          // We check if campaign_id is present
           if (params?.campaign_id && params?.contact_id) {
-             const config = await getCallConfig(params.campaign_id, params.contact_id, callSid, agentId);
-             if (config) {
-               console.log(`[Server] ✅ Loaded full prompt (${config.prompt.length} chars) from API`);
-               prompt = config.prompt;
-               firstMessage = config.first_message;
-             } else {
-               console.log(`[Server] ⚠️ Failed to load config from API, using provided params`);
+             console.log("[Server] Fetching full prompt from API to avoid Twilio limits...");
+             const apiData = await getPromptFromAPI(params.campaign_id, params.contact_id);
+             if (apiData) {
+               prompt = apiData.prompt;
+               firstMessage = apiData.first_message || firstMessage;
+               console.log(`[Server] Retrieved full prompt (${prompt.length} chars)`);
              }
           }
+          
+          // Fallback defaults
+          prompt = prompt || "You are a helpful assistant";
+          firstMessage = firstMessage || "";
 
           if (agentId) {
-            console.log(`[ElevenLabs] Initializing for agent: ${agentId}`);
             try {
               const signedUrl = await getSignedUrl(agentId);
               elevenLabsWs = new WebSocket(signedUrl);
