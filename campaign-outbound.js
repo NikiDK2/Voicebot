@@ -29,6 +29,7 @@ fastify.get("/", async (_, reply) => {
   reply.send({ status: "running", timestamp: new Date().toISOString() });
 });
 
+// Helper to get signed URL from ElevenLabs
 async function getSignedUrl(agentId) {
   try {
     const response = await fetch(
@@ -44,6 +45,22 @@ async function getSignedUrl(agentId) {
   }
 }
 
+// Helper to fetch full call configuration (prompt) from PHP API
+async function getCallConfig(campaignId, contactId, callSid, agentId) {
+  try {
+    const apiUrl = `https://innovationstudio.be/Scraper/get-call-config.php?campaign_id=${campaignId}&contact_id=${contactId}&call_sid=${callSid}&agent_id=${agentId}`;
+    console.log(`[Server] Fetching config from: ${apiUrl}`);
+    const response = await fetch(apiUrl);
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    return data;
+  } catch (error) {
+    console.error("[Server] Error fetching call config:", error);
+    return null;
+  }
+}
+
 fastify.register(async (fastifyInstance) => {
   const websocketHandler = (connection, req) => {
     console.log(`[Server] ✅ Twilio connected to ${req.url}`);
@@ -54,10 +71,8 @@ fastify.register(async (fastifyInstance) => {
 
     console.log(`[Twilio] Initial Socket State: ${ws.readyState} (OPEN=${WebSocket.OPEN})`);
 
-    // Register error handler immediately
     ws.on("error", (err) => console.error("[Twilio] Socket Error:", err));
 
-    // Handle incoming messages from Twilio
     ws.on("message", async (message) => {
       try {
         const msgStr = message.toString();
@@ -69,10 +84,27 @@ fastify.register(async (fastifyInstance) => {
 
         if (msg.event === "start") {
           streamSid = msg.start.streamSid;
+          const callSid = msg.start.callSid;
+          const params = msg.start.customParameters;
           console.log(`[Twilio] Stream started: ${streamSid}`);
           
-          // ElevenLabs Setup
-          const agentId = msg.start.customParameters?.agent_id;
+          // Default values from Twilio params (which might be truncated)
+          let prompt = params?.prompt || "You are a helpful assistant";
+          let firstMessage = params?.first_message || "";
+          const agentId = params?.agent_id;
+
+          // FETCH FULL PROMPT FROM API if IDs are present
+          if (params?.campaign_id && params?.contact_id) {
+             const config = await getCallConfig(params.campaign_id, params.contact_id, callSid, agentId);
+             if (config) {
+               console.log(`[Server] ✅ Loaded full prompt (${config.prompt.length} chars) from API`);
+               prompt = config.prompt;
+               firstMessage = config.first_message;
+             } else {
+               console.log(`[Server] ⚠️ Failed to load config from API, using provided params`);
+             }
+          }
+
           if (agentId) {
             console.log(`[ElevenLabs] Initializing for agent: ${agentId}`);
             try {
@@ -85,8 +117,8 @@ fastify.register(async (fastifyInstance) => {
                   type: "conversation_initiation_client_data",
                   conversation_config_override: {
                     agent: { 
-                      prompt: { prompt: msg.start.customParameters?.prompt || "You are a helpful assistant" }, 
-                      first_message: msg.start.customParameters?.first_message || "" 
+                      prompt: { prompt: prompt }, 
+                      first_message: firstMessage 
                     },
                   },
                 };
@@ -106,7 +138,6 @@ fastify.register(async (fastifyInstance) => {
                     ws.send(JSON.stringify(audioPayload));
                   }
                   
-                  // Log agent responses for debugging
                   if (message.type === "agent_response") {
                     console.log(`[Agent]: ${message.agent_response_event?.agent_response}`);
                   }
