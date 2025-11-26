@@ -119,25 +119,6 @@ async function getSignedUrl(agentId) {
   }
 }
 
-// CRITICAL: Add HTTP endpoint to log ALL connection attempts (including failed WebSocket upgrades)
-fastify.get("/campaign-media-stream", async (request, reply) => {
-  console.log(
-    "[DEBUG] [Server] 🚨 HTTP GET naar WebSocket endpoint!",
-    "Dit betekent dat iemand (mogelijk Twilio) probeert HTTP GET te gebruiken in plaats van WebSocket upgrade",
-    "URL:", request.url,
-    "Headers:", JSON.stringify(request.headers),
-    "IP:", request.ip,
-    "User-Agent:", request.headers['user-agent'] || "unknown"
-  );
-  
-  // Return 426 Upgrade Required - dit is de correcte response voor WebSocket upgrades
-  reply.code(426).send({
-    error: "WebSocket upgrade required",
-    message: "This endpoint requires a WebSocket upgrade. Use wss:// protocol.",
-    websocket_url: "wss://voicebot-w8gx.onrender.com/campaign-media-stream"
-  });
-});
-
 // Register WebSocket route (like simple-websocket-server.js)
 fastify.register(async (fastifyInstance) => {
   // CRITICAL: Log when WebSocket route is being registered
