@@ -20,7 +20,18 @@ fastify.get("/", async (request, reply) => {
   return reply.send({ 
     message: "RIZIV Outbound Calling Server running",
     status: "ok",
-    websocket_endpoint: "/campaign-media-stream"
+    websocket_endpoint: "/campaign-media-stream",
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Test endpoint om te controleren of WebSocket route bestaat
+fastify.get("/test-websocket-route", async (request, reply) => {
+  return reply.send({ 
+    message: "WebSocket route test endpoint",
+    websocket_route: "/campaign-media-stream",
+    status: "Route should be available at wss://voicebot-w8gx.onrender.com/campaign-media-stream",
+    note: "This is an HTTP endpoint. The WebSocket route is at /campaign-media-stream"
   });
 });
 
@@ -1446,4 +1457,7 @@ fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
     process.exit(1);
   }
   console.log(`[Server] RIZIV Outbound Calling Server running on port ${PORT}`);
+  console.log(`[Server] WebSocket endpoint: wss://voicebot-w8gx.onrender.com/campaign-media-stream`);
+  console.log(`[Server] Health check: https://voicebot-w8gx.onrender.com/`);
+  console.log(`[Server] Ready to handle ElevenLabs calls`);
 });
