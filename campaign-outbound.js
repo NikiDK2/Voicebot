@@ -468,8 +468,24 @@ fastify.register(async (fastifyInstance) => {
               }
 
               try {
+                console.log(
+                  "[DEBUG] [ElevenLabs] 🔄 Starting ElevenLabs connection setup",
+                  "Agent ID:", agentId,
+                  "StreamSid:", streamSid,
+                  "CallSid:", callSid
+                );
                 const signedUrl = await getSignedUrl(agentId);
+                console.log(
+                  "[DEBUG] [ElevenLabs] ✅ Got signed URL from ElevenLabs API",
+                  "URL length:", signedUrl?.length || 0,
+                  "URL preview:", signedUrl?.substring(0, 80) || "NULL"
+                );
                 elevenLabsWs = new WebSocket(signedUrl);
+                console.log(
+                  "[DEBUG] [ElevenLabs] 🔌 WebSocket object created",
+                  "Initial readyState:", elevenLabsWs?.readyState,
+                  "(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)"
+                );
 
                 elevenLabsWs.on("open", () => {
                   console.log(
@@ -622,8 +638,24 @@ fastify.register(async (fastifyInstance) => {
                     "[DEBUG] [ElevenLabs] ❌ WebSocket error:",
                     error.message || error,
                     "StreamSid:", streamSid,
-                    "CallSid:", callSid
+                    "CallSid:", callSid,
+                    "Error code:", error.code,
+                    "Error details:", JSON.stringify(error)
                   );
+                });
+                
+                elevenLabsWs.on("close", (code, reason) => {
+                  console.error(
+                    "[DEBUG] [ElevenLabs] 🚨 WebSocket CLOSED:",
+                    "Code:", code,
+                    "Reason:", reason?.toString() || "No reason provided",
+                    "StreamSid:", streamSid,
+                    "CallSid:", callSid,
+                    "ReadyState:", elevenLabsWs?.readyState,
+                    "ElevenLabsReady flag:", elevenLabsReady
+                  );
+                  // Reset ready flag when WebSocket closes
+                  elevenLabsReady = false;
                 });
 
                 elevenLabsWs.on("message", (data) => {
