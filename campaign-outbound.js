@@ -1,242 +1,51 @@
 import Fastify from "fastify";
-import WebSocket from "ws";
-import dotenv from "dotenv";
-import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import fastifyCors from "@fastify/cors";
 
-dotenv.config();
-
-// CRITICAL: trustProxy is required for Render.com
+// Ultra-minimal debug server
 const fastify = Fastify({ 
   logger: true,
   trustProxy: true 
 });
 
-// CRITICAL: Debug logging for ALL incoming requests
-fastify.addHook('onRequest', async (request, reply) => {
-  console.log(`[DEBUG] [Server] 📨 Incoming request: ${request.method} ${request.url}`);
-  if (request.headers.upgrade && request.headers.upgrade.toLowerCase() === 'websocket') {
-    console.log(`[DEBUG] [Server] 🚀 WebSocket Upgrade Request Detected!`);
-    console.log(`[DEBUG] [Server] Headers:`, JSON.stringify(request.headers));
-  }
-});
-
-fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
-fastify.register(fastifyCors, { 
-  origin: true,
-  credentials: true
-});
+fastify.register(fastifyCors, { origin: true });
 
 const PORT = process.env.PORT || 8000;
 
-// Helper: Get signed URL
-async function getSignedUrl(agentId) {
-  try {
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
-      {
-        method: "GET",
-        headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY },
-      }
-    );
-    if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
-    const data = await response.json();
-    return data.signed_url;
-  } catch (error) {
-    console.error("Error getting signed URL:", error);
-    throw error;
-  }
-}
-
-// Root route for health check
-fastify.get("/", async (_, reply) => {
-  reply.send({
-    message: "RIZIV Outbound Calling Server (WebSocket Only)",
-    status: "running",
-    timestamp: new Date().toISOString()
-  });
+// Log every single request at the TCP/HTTP level
+fastify.addHook('onRequest', async (request, reply) => {
+  console.log(`[DEBUG] 📨 ${request.method} ${request.url}`);
+  console.log(`[DEBUG] Headers: ${JSON.stringify(request.headers)}`);
 });
 
+fastify.get('/', async () => {
+  return { status: 'debug-mode-active' };
+});
+
+// The critical route
 fastify.register(async (fastifyInstance) => {
-  fastifyInstance.get("/campaign-media-stream", { websocket: true }, (connection, req) => {
-    console.log("[Server] Twilio connected to campaign media stream");
-    console.log(`[DEBUG] WebSocket Connection Headers:`, JSON.stringify(req.headers));
+  fastifyInstance.get('/campaign-media-stream', { websocket: true }, (connection, req) => {
+    console.log('!!! WEBSOCKET CONNECTION ESTABLISHED !!!');
     
-    const ws = connection.socket;
-
-    let streamSid = null;
-    let callSid = null;
-    let elevenLabsWs = null;
-    let customParameters = null;
-    let silenceTimer = null;
-    let lastActivity = Date.now();
-
-    ws.on("error", console.error);
-
-    // Function to reset silence timer
-    const resetSilenceTimer = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        // console.log("[Twilio] No activity for 20 seconds, closing connection");
-        // Only close if we really want to enforce a timeout
-        // ws.close();
-      }, 20000); 
-    };
-
-    // Function to check for closing phrases
-    const checkForClosingPhrase = (text) => {
-      const lowerText = text.toLowerCase();
-      const closingPhrases = [
-        'bedankt voor uw tijd en succes met uw accreditatie',
-        'bedankt voor uw tijd en nog een fijne dag',
-        'bedankt voor de tijd en nog een fijne dag',
-        'bedankt en nog een fijne dag',
-        'fijne dag',
-        'prettige dag'
-      ];
-      for (const phrase of closingPhrases) {
-        if (lowerText.includes(phrase)) {
-          console.log(`[ElevenLabs] Closing phrase detected: "${phrase}", hanging up immediately`);
-          if (streamSid) {
-            ws.send(JSON.stringify({ event: "stop", streamSid }));
-          }
-          
-          // Delay closing to allow audio to finish playing
-          setTimeout(() => {
-            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-              elevenLabsWs.close();
-            }
-            ws.close();
-          }, 2000);
-          
-          return true;
-        }
-      }
-      return false;
-    };
-
-    ws.on("message", async (message) => {
-      try {
-        const msg = JSON.parse(message);
-        if (msg.event !== "media") {
-          console.log("[Twilio] Received message event:", msg.event);
-        }
-
-        switch (msg.event) {
-          case "start":
-            streamSid = msg.start.streamSid;
-            callSid = msg.start.callSid;
-            customParameters = msg.start.customParameters;
-            lastActivity = Date.now();
-            console.log(`[Twilio] Stream started: ${streamSid}`);
-            console.log(`[Twilio] Call SID: ${callSid}`);
-            console.log(`[Twilio] Parameters:`, JSON.stringify(customParameters));
-
-            const agentId = customParameters?.agent_id;
-            if (!agentId) {
-              console.error("[ElevenLabs] No agent ID provided");
-              return;
-            }
-
-            try {
-              const signedUrl = await getSignedUrl(agentId);
-              elevenLabsWs = new WebSocket(signedUrl);
-
-              elevenLabsWs.on("open", () => {
-                console.log("[ElevenLabs] Connected to Conversational AI");
-                const prompt = customParameters?.prompt || "You are a helpful assistant";
-                const firstMessage = customParameters?.first_message || "";
-                const initialConfig = {
-                  type: "conversation_initiation_client_data",
-                  conversation_config_override: {
-                    agent: { prompt: { prompt }, first_message: firstMessage },
-                  },
-                };
-                elevenLabsWs.send(JSON.stringify(initialConfig));
-              });
-
-              elevenLabsWs.on("message", (data) => {
-                try {
-                  const message = JSON.parse(data);
-                  if (message.type === "audio" && streamSid) {
-                    ws.send(JSON.stringify({
-                      event: "media",
-                      streamSid,
-                      media: { payload: message.audio?.chunk || message.audio_event?.audio_base_64 },
-                    }));
-                    lastActivity = Date.now();
-                    resetSilenceTimer();
-                  }
-                  if (message.type === "agent_response") {
-                    const text = message.agent_response_event?.agent_response || "";
-                    console.log(`[Agent]: ${text}`);
-                    if (checkForClosingPhrase(text)) return;
-                    lastActivity = Date.now();
-                    resetSilenceTimer();
-                  }
-                  if (message.type === "user_transcript") {
-                    console.log(`[User]: ${message.user_transcription_event?.user_transcript}`);
-                    lastActivity = Date.now();
-                    resetSilenceTimer();
-                  }
-                } catch (error) {
-                  console.error("[ElevenLabs] Error:", error);
-                }
-              });
-              
-              elevenLabsWs.on("error", (error) => {
-                console.error("[ElevenLabs] WebSocket Error:", error);
-              });
-              
-              elevenLabsWs.on("close", () => {
-                console.log("[ElevenLabs] Disconnected");
-              });
-              
-            } catch (error) {
-              console.error("[ElevenLabs] Setup error:", error);
-            }
-            resetSilenceTimer();
-            break;
-
-          case "media":
-            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-              elevenLabsWs.send(JSON.stringify({
-                user_audio_chunk: Buffer.from(msg.media.payload, "base64").toString("base64"),
-              }));
-              lastActivity = Date.now();
-              resetSilenceTimer();
-            }
-            break;
-
-          case "stop":
-            console.log(`[Twilio] Stream ${streamSid} ended`);
-            if (silenceTimer) clearTimeout(silenceTimer);
-            if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-              elevenLabsWs.close();
-            }
-            break;
-        }
-      } catch (error) {
-        console.error("[Twilio] Error:", error);
-      }
+    connection.socket.on('message', (msg) => {
+      console.log(`[WS] Message received: ${msg.toString().substring(0, 50)}...`);
     });
-
-    ws.on("close", () => {
-      console.log("[Twilio] Client disconnected");
-      if (silenceTimer) clearTimeout(silenceTimer);
-      if (elevenLabsWs?.readyState === WebSocket.OPEN) {
-        elevenLabsWs.close();
-      }
+    
+    connection.socket.on('close', () => {
+      console.log('[WS] Closed');
+    });
+    
+    connection.socket.on('error', (err) => {
+      console.error('[WS] Error:', err);
     });
   });
 });
 
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
+fastify.listen({ port: PORT, host: '0.0.0.0' }, (err, address) => {
   if (err) {
-    console.error("Error starting server:", err);
+    console.error(err);
     process.exit(1);
   }
-  console.log(`[Server] RIZIV Outbound Calling Server running on port ${PORT}`);
+  console.log(`DEBUG SERVER LISTENING ON ${address}`);
 });
