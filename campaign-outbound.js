@@ -9,15 +9,10 @@ dotenv.config();
 
 const fastify = Fastify({ logger: true });
 fastify.register(fastifyFormBody);
+fastify.register(fastifyWs); // Register WebSocket plugin FIRST (like simple-websocket-server.js)
 fastify.register(fastifyCors, { origin: true });
 
 const PORT = process.env.PORT || 8000;
-
-// Register WebSocket plugin and route together
-fastify.register(async function (fastifyInstance) {
-  await fastifyInstance.register(fastifyWs);
-  
-  // Register WebSocket route within the same register block
 
 // Root route for health check (required for Render.com)
 fastify.get("/", async (request, reply) => {
@@ -116,6 +111,8 @@ async function getSignedUrl(agentId) {
   }
 }
 
+// Register WebSocket route (like simple-websocket-server.js)
+fastify.register(async (fastifyInstance) => {
   fastifyInstance.get(
     "/campaign-media-stream",
     { websocket: true },
