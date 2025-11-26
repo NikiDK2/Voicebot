@@ -460,15 +460,25 @@ fastify.get(
           // Log ALLE messages voor debugging (ook media)
           const messageStr = message.toString();
           
+          // CRITICAL: Check voor "start" event VOOR parsing (om te zien of het überhaupt binnenkomt)
+          if (messageStr.includes('"event":"start"') || messageStr.includes("event\":\"start")) {
+            console.log(
+              "[DEBUG] [Twilio] 🎯🎯🎯 START EVENT DETECTED IN RAW MESSAGE! 🎯🎯🎯",
+              "Raw message:", messageStr.substring(0, 1000),
+              "Timestamp:", new Date().toISOString()
+            );
+          }
+          
           const msg = JSON.parse(message);
           
-          // Log "start" event EXTRA duidelijk
+          // Log "start" event EXTRA duidelijk - NA parsing
           if (msg.event === "start") {
             console.log(
-              "[DEBUG] [Twilio] 🎯🎯🎯 START EVENT ONTVANGEN! 🎯🎯🎯",
-              "StreamSid:", msg.start?.streamSid,
-              "CallSid:", msg.start?.callSid,
+              "[DEBUG] [Twilio] 🎯🎯🎯 START EVENT PARSED SUCCESSFULLY! 🎯🎯🎯",
+              "StreamSid:", msg.start?.streamSid || "MISSING",
+              "CallSid:", msg.start?.callSid || "MISSING",
               "CustomParameters:", JSON.stringify(msg.start?.customParameters || {}, null, 2),
+              "Full parsed message:", JSON.stringify(msg, null, 2).substring(0, 1000),
               "Timestamp:", new Date().toISOString()
             );
           }
@@ -1425,6 +1435,16 @@ fastify.get(
               break;
 
             case "media":
+              // CRITICAL: Haal callSid en streamSid uit media event als deze nog niet bekend zijn
+              // (Dit kan gebeuren als de "start" event niet wordt ontvangen)
+              if (!streamSid && msg.media?.streamSid) {
+                streamSid = msg.media.streamSid;
+                console.log(
+                  "[DEBUG] [Twilio] 🔍 Extracted streamSid from media event:",
+                  streamSid
+                );
+              }
+              
               // Stop met verwerken van audio als call wordt beëindigd
               if (callEnding) {
                 console.log(
@@ -1439,13 +1459,17 @@ fastify.get(
               // probeer de verbinding alsnog op te zetten (als "start" event niet werd ontvangen)
               // Check: WebSocket moet OPEN zijn (readyState === 1), anders is het niet werkend
               if (!elevenLabsWs || elevenLabsWs.readyState !== WebSocket.OPEN) {
-                if (!elevenLabsSetupAttempted && callSid) {
+                if (!elevenLabsSetupAttempted) {
                   elevenLabsSetupAttempted = true; // Voorkom meerdere pogingen
                   console.log(
-                    "[DEBUG] [ElevenLabs] ⚠️ FALLBACK: Media received but ElevenLabs not connected",
+                    "[DEBUG] [ElevenLabs] ⚠️⚠️⚠️ FALLBACK TRIGGERED! ⚠️⚠️⚠️",
+                    "Media received but ElevenLabs not connected",
                     "Attempting to setup connection now...",
-                    "CallSid:", callSid,
-                    "StreamSid:", streamSid || "UNKNOWN"
+                    "CallSid:", callSid || "UNKNOWN",
+                    "StreamSid:", streamSid || "UNKNOWN",
+                    "elevenLabsWs:", elevenLabsWs ? "exists" : "null",
+                    "readyState:", elevenLabsWs?.readyState || "N/A",
+                    "elevenLabsReady:", elevenLabsReady
                   );
                   
                   // Probeer agent_id te halen uit customParameters of gebruik default
@@ -1455,7 +1479,9 @@ fastify.get(
                   if (agentId) {
                     console.log(
                       "[DEBUG] [ElevenLabs] 🔄 FALLBACK: Setting up ElevenLabs with agent_id:",
-                      agentId
+                      agentId,
+                      "callSid:", callSid || "UNKNOWN",
+                      "streamSid:", streamSid || "UNKNOWN"
                     );
                     
                     // Setup ElevenLabs verbinding (gebruik dezelfde code als in "start" case)
