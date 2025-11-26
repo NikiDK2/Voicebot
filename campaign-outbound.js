@@ -54,7 +54,8 @@ async function getSignedUrl(agentId) {
   }
 }
 
-fastify.register(async (fastifyInstance) => {
+// Register WebSocket route directly (not nested in another register)
+fastify.register(async function (fastifyInstance) {
   fastifyInstance.get(
     "/campaign-media-stream",
     { websocket: true },
@@ -64,9 +65,21 @@ fastify.register(async (fastifyInstance) => {
         "Timestamp:",
         new Date().toISOString(),
         "Request URL:",
-        req.url
+        req.url,
+        "Method:",
+        req.method,
+        "Headers:",
+        JSON.stringify(req.headers)
       );
       const ws = connection.socket;
+      
+      // Log immediately when WebSocket connection is established
+      console.log(
+        "[DEBUG] [Server] 🔌 WebSocket connection established",
+        "ReadyState:", ws.readyState,
+        "Protocol:", ws.protocol || "none",
+        "URL:", req.url
+      );
 
       let streamSid = null;
       let callSid = null;
