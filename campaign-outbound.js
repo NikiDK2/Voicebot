@@ -9,8 +9,13 @@ dotenv.config();
 
 const fastify = Fastify({ logger: true });
 fastify.register(fastifyFormBody);
-fastify.register(fastifyWs);
 fastify.register(fastifyCors, { origin: true });
+
+// Register WebSocket plugin and routes together
+fastify.register(async function (fastifyInstance) {
+  await fastifyInstance.register(fastifyWs);
+  
+  // Register WebSocket route within the same register block
 
 const PORT = process.env.PORT || 8000;
 
@@ -111,8 +116,7 @@ async function getSignedUrl(agentId) {
   }
 }
 
-// Register WebSocket route within a register block (more reliable)
-fastify.register(async function (fastifyInstance) {
+  // WebSocket route for Twilio Media Streams
   fastifyInstance.get(
     "/campaign-media-stream",
     { websocket: true },
@@ -1813,7 +1817,7 @@ fastify.register(async function (fastifyInstance) {
       });
     }
   );
-}); // End of fastify.register block for WebSocket route
+}); // End of fastify.register block for WebSocket plugin and route
 
 // Start server
 fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
