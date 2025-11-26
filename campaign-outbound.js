@@ -134,14 +134,39 @@ fastify.register(async (fastifyInstance) => {
       
       // CRITICAL: Log WebSocket upgrade attempt IMMEDIATELY
       console.log(
-        "[DEBUG] [Server] 🎯🎯🎯 WEBSOCKET UPGRADE ATTEMPT! 🎯🎯🎯",
+        "[DEBUG] [Server] 🎯🎯🎯 WEBSOCKET UPGRADE SUCCESSFUL! 🎯🎯🎯",
         "Timestamp:", new Date().toISOString(),
         "URL:", request?.url || "unknown",
         "Method:", request?.method || "unknown",
         "Headers:", JSON.stringify(request?.headers || {}),
         "IP:", request?.socket?.remoteAddress || "unknown",
-        "User-Agent:", request?.headers?.['user-agent'] || "unknown"
+        "User-Agent:", request?.headers?.['user-agent'] || "unknown",
+        "WebSocket ReadyState:", ws.readyState,
+        "WebSocket Protocol:", ws.protocol || "none"
       );
+      
+      // CRITICAL: Set up message handler IMMEDIATELY to catch "start" event
+      // Don't wait for anything - Twilio sends "start" event immediately after connection
+      ws.on("message", (message) => {
+        try {
+          const msgStr = message.toString();
+          console.log(
+            "[DEBUG] [Twilio] 📨 FIRST MESSAGE RECEIVED!",
+            "Length:", msgStr.length,
+            "First 500 chars:", msgStr.substring(0, 500),
+            "Timestamp:", new Date().toISOString()
+          );
+          
+          // Check if this is the "start" event
+          if (msgStr.includes('"event":"start"') || msgStr.includes('event":"start')) {
+            console.log(
+              "[DEBUG] [Twilio] 🎯🎯🎯 START EVENT IN FIRST MESSAGE! 🎯🎯🎯"
+            );
+          }
+        } catch (error) {
+          console.error("[DEBUG] [Twilio] ❌ Error parsing first message:", error);
+        }
+      });
       
       console.log(
         "[DEBUG] [Server] ✅ Twilio connected to campaign media stream",
