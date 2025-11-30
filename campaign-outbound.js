@@ -14,6 +14,11 @@ fastify.register(fastifyCors, { origin: true });
 
 const PORT = process.env.PORT || 8000;
 
+// Health check endpoint
+fastify.get("/", async (_, reply) => {
+  reply.send({ status: "running", timestamp: new Date().toISOString() });
+});
+
 // Helper: Get signed URL
 async function getSignedUrl(agentId) {
   try {
@@ -35,7 +40,7 @@ async function getSignedUrl(agentId) {
 
 fastify.register(async (fastifyInstance) => {
   fastifyInstance.get(
-    "/campaign-media-stream",
+    "/campaign-media-stream-v2",
     { websocket: true },
     (connection, req) => {
       console.log(
