@@ -38,6 +38,43 @@ async function getSignedUrl(agentId) {
   }
 }
 
+// Helper: Get prompt from API (CRITICAL: prevents Twilio truncation)
+async function getPromptFromAPI(campaignId, contactId, callSid = null) {
+  try {
+    let url = `https://innovationstudio.be/Scraper/get-prompt-api.php?campaign_id=${campaignId}&contact_id=${contactId}`;
+    if (callSid) {
+      url += `&call_sid=${encodeURIComponent(callSid)}`;
+    }
+    console.log(`[Server] 🔍 Fetching prompt from API: ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(`[Server] ❌ API Error: ${response.statusText}`);
+      throw new Error(`API Error: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    if (data.error) {
+      console.error(`[Server] ❌ API returned error: ${data.error}`);
+      throw new Error(data.error);
+    }
+    
+    console.log(`[Server] ✅ Successfully fetched prompt from API:`, {
+      promptLength: data.prompt?.length || 0,
+      firstMessageLength: data.first_message?.length || 0,
+      firstMessagePreview: data.first_message?.substring(0, 100)
+    });
+    
+    return { 
+      prompt: data.prompt, 
+      first_message: data.first_message 
+    };
+  } catch (error) {
+    console.error("[Server] ❌ Error fetching prompt from API:", error.message);
+    return null;
+  }
+}
+
 fastify.register(async (fastifyInstance) => {
   fastifyInstance.get(
     "/campaign-media-stream-v2",
@@ -374,15 +411,56 @@ fastify.register(async (fastifyInstance) => {
                 const signedUrl = await getSignedUrl(agentId);
                 elevenLabsWs = new WebSocket(signedUrl);
 
-                elevenLabsWs.on("open", () => {
+                elevenLabsWs.on("open", async () => {
                   console.log(
                     "[DEBUG] [ElevenLabs] ✅ Connected to Conversational AI WebSocket",
                     "StreamSid:", streamSid,
                     "CallSid:", callSid
                   );
-                  const prompt =
-                    customParameters?.prompt || "You are a helpful assistant";
-                  const firstMessage = customParameters?.first_message || "";
+                  
+                  // CRITICAL: Get prompt from API if campaign_id is available
+                  // This prevents Twilio URL truncation issues
+                  let prompt = customParameters?.prompt;
+                  let firstMessage = customParameters?.first_message;
+                  
+                  if (customParameters?.campaign_id && customParameters?.contact_id) {
+                    console.log(
+                      "[Server] 🔍 Campaign ID detected - fetching full prompt from API to avoid Twilio truncation",
+                      "Campaign ID:", customParameters.campaign_id,
+                      "Contact ID:", customParameters.contact_id,
+                      "Call SID:", callSid
+                    );
+                    
+                    const apiData = await getPromptFromAPI(
+                      customParameters.campaign_id, 
+                      customParameters.contact_id, 
+                      callSid
+                    );
+                    
+                    if (apiData) {
+                      prompt = apiData.prompt;
+                      firstMessage = apiData.first_message || firstMessage;
+                      console.log(
+                        "[Server] ✅ Successfully retrieved full prompt from API",
+                        "Prompt length:", prompt?.length || 0,
+                        "First message length:", firstMessage?.length || 0
+                      );
+                    } else {
+                      console.log(
+                        "[Server] ⚠️ Failed to retrieve prompt from API - using fallback from customParameters or default"
+                      );
+                    }
+                  } else {
+                    console.log(
+                      "[Server] ⚠️ No campaign_id/contact_id found - using prompt from customParameters",
+                      "Has prompt:", !!prompt,
+                      "Prompt length:", prompt?.length || 0
+                    );
+                  }
+                  
+                  // Fallback to default if still no prompt
+                  prompt = prompt || "You are a helpful assistant";
+                  firstMessage = firstMessage || "";
                   
                   console.log(
                     "[DEBUG] [ElevenLabs] Sending initial config:",
